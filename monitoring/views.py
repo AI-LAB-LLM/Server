@@ -3,16 +3,13 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
-from .models import Protectee, Event
-from .serializers import (
+from monitoring.models import Protectee, Event
+from monitoring.serializers import (
     IMUAlertSerializer,
     GEOAlertSerializer,
 )
 
 
-# =========================
-# Health Check
-# =========================
 class HealthCheckView(APIView):
     """
     서버 상태 확인용
@@ -22,16 +19,15 @@ class HealthCheckView(APIView):
         return Response({"status": "ok"}, status=status.HTTP_200_OK)
 
 
-# =========================
+
 # IMU Alert API
-# =========================
 @extend_schema(
     request=IMUAlertSerializer,
     responses={201: None},
     summary="IMU 위험 알람 수신",
     description=(
         "IMU 센서에서 위험도가 특정 임계치를 넘었을 때 호출되는 API\n"
-        "- protectee_id: 보호대상자 ID\n"
+        "- protectee_id: 보호대상자 ID (Protectee.pk)\n"
         "- imu_danger_level: 위험도 (정수)"
     ),
 )
@@ -44,9 +40,8 @@ class IMUAlertView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        protectee = get_object_or_404(
-            Protectee, external_id=data["protectee_id"]
-        )
+        # external_id 필드가 없으므로 pk(id)로 조회
+        protectee = get_object_or_404(Protectee, pk=data["protectee_id"])
 
         event = Event.objects.create(
             protectee=protectee,
@@ -64,15 +59,15 @@ class IMUAlertView(APIView):
         )
 
 
-# =========================
+
 # GEO Alert API
-# =========================
 @extend_schema(
     request=GEOAlertSerializer,
     responses={201: None},
     summary="GEO 위치 이벤트 수신",
     description=(
         "실시간 위치 정보 및 평소 경로 여부를 수신하는 API\n"
+        "- protectee_id: 보호대상자 ID (Protectee.pk)\n"
         "- is_usual_route: 1=평소 경로, 0=이탈"
     ),
 )
@@ -85,9 +80,8 @@ class GEOAlertView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        protectee = get_object_or_404(
-            Protectee, external_id=data["protectee_id"]
-        )
+        # external_id 필드가 없으므로 pk(id)로 조회
+        protectee = get_object_or_404(Protectee, pk=data["protectee_id"])
 
         event = Event.objects.create(
             protectee=protectee,
