@@ -29,6 +29,9 @@
         <img src="{% static 'icons/nav_report.png' %}" alt="일일 리포트" class="nav-icon">
         <span class="label">일일 리포트</span>
       </a>
+      <a href="{% url 'ppg:dashboard' %}" class="{% block nav_ppg_active %}{% endblock %}">
+        <span class="label">PPG dashboard</span>
+      </a>
     </nav>
   </aside>
 
