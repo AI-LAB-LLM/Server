@@ -6,6 +6,13 @@ from monitoring.models import Protectee, Event
 from monitoring.serializers import IMUAlertSerializer, GEOAlertSerializer
 
 
+class HealthCheckView(APIView):
+    """
+    서버 상태 확인용
+    GET /api/v1/health
+    """
+    def get(self, request):
+        return Response({"status": "ok"}, status=status.HTTP_200_OK)
 
 # IMU Alert API
 @extend_schema(
