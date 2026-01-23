@@ -1,31 +1,46 @@
-"""
-URL configuration for llm_web project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/5.2/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-"""
-
 from django.contrib import admin
-from django.urls import path,include
-from report.views import report
-from home.views import home_page
-
-print("✅ urls.py loaded")
+from django.urls import path, include
+from ppg.views_api import IngestView, RecordsView, BaselineSessionView
+from monitoring.views import (
+    HealthCheckView,
+    IMUAlertView,
+    GEOAlertView, 
+)
+from drf_spectacular.views import (
+    SpectacularAPIView,
+    SpectacularSwaggerView,
+)
 
 urlpatterns = [
     path("admin/", admin.site.urls),
- 
+
     path("", include("home.urls")),
     path("dbchat/", include("dbchat.urls")),
-    path("report/", include("report.urls",namespace='report')),
+    path("report/", include("report.urls", namespace="report")),
+    path("ppg/", include("ppg.urls")),
+
+    # =========================
+    # Sensor APIs
+    # =========================
+    path("api/v1/health", HealthCheckView.as_view()),
+    path("api/v1/events/imu-alert", IMUAlertView.as_view()),
+    path("api/v1/events/geo-alert", GEOAlertView.as_view()), 
+
+    # =========================
+    # Swagger / OpenAPI
+    # =========================
+    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path(
+        "api/docs/",
+        SpectacularSwaggerView.as_view(url_name="schema"),
+        name="swagger-ui",
+    ),
+
+     # ---- API (DRF) ----
+    path("api/ingest/",  IngestView.as_view(),  name="api-ingest"),
+    path("api/records/", RecordsView.as_view(), name="api-records"),
+    path('api/baseline/', BaselineSessionView.as_view(), name='baseline-session'),
+
+   
 ]
+
