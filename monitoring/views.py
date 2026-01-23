@@ -2,23 +2,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from drf_spectacular.utils import extend_schema
-
 from monitoring.models import Protectee, Event
 from monitoring.serializers import IMUAlertSerializer, GEOAlertSerializer
 
 
-class HealthCheckView(APIView):
-    """
-    서버 상태 확인용
-    GET /api/v1/health
-    """
-    def get(self, request):
-        return Response({"status": "ok"}, status=status.HTTP_200_OK)
 
-
-# =========================
 # IMU Alert API
-# =========================
 @extend_schema(
     request=IMUAlertSerializer,
     responses={201: None},
@@ -41,7 +30,7 @@ class IMUAlertView(APIView):
 
         device_id = data["device_id"]
 
-        # ✅ 없으면 Protectee 자동 생성
+        # 없으면 Protectee 자동 생성
         protectee, created = Protectee.objects.get_or_create(
             device_id=device_id,
             defaults={"name": f"unknown-{device_id[:6]}"},
@@ -65,9 +54,7 @@ class IMUAlertView(APIView):
         )
 
 
-# =========================
 # GEO Alert API
-# =========================
 @extend_schema(
     request=GEOAlertSerializer,
     responses={201: None},
@@ -90,7 +77,7 @@ class GEOAlertView(APIView):
 
         device_id = data["device_id"]
 
-        # ✅ 없으면 Protectee 자동 생성 (IMU와 동일)
+        # 없으면 Protectee 자동 생성
         protectee, created = Protectee.objects.get_or_create(
             device_id=device_id,
             defaults={"name": f"unknown-{device_id[:6]}"},
