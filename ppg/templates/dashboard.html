@@ -1,0 +1,105 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  {% load static %}
+  <meta charset="UTF-8">
+  <title>dashboard</title>
+  <link rel="stylesheet" href="{% static 'css/dashboard.css' %}">
+  <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/pretendard/dist/web/static/pretendard.css" />
+  <style>
+    .kpis{display:flex;align-items:center;gap:12px}
+    .push-right{margin-left:auto}
+    .wear-popup--hidden{display:none!important}
+  </style>
+</head>
+<body>
+
+  <div id="appRoot">
+    <header class="header">
+      <h1>Apnea detection dashboard powered by Sungshin Women's University</h1>
+      <img class="logo" src="{% static 'image/logo.png' %}" alt="logo" />
+    </header>
+
+    <section class="kpis">
+  <div class="kpi">
+    <div class="kpi-label">Last Device</div>
+    <div id="kpiDevice" class="kpi-value">-</div>
+  </div>
+
+  <div class="kpi-right">
+    <div class="kpi kpi-compact">
+      <div class="kpi-label">
+        <span class="kpi-title">Baseline</span>
+        <div class="baseline-values">
+          <div class="pi-row">PI <span class="val" id="piMean">–</span> ± <span class="sd" id="piSd">–</span></div>
+          <div class="rmssd-row">RMSSD <span class="val" id="rmMean">–</span> ± <span class="sd" id="rmSd">–</span></div>
+        </div>
+      </div>
+    </div>
+    <button id="btnStartNew" type="button" class="btn-inline">측정 시작</button>
+  </div>
+    </section>
+
+    <section class="grid-split">
+
+  <!-- 왼쪽: 착용/미착용 카드 -->
+  <div class="card grid-left">
+  <div class="wear-card wear-card--split" id="wearCard">
+    <div class="wear-card__top">
+      <div class="wear-card__title">탈부착 여부</div>
+      <div id="wearStatusText" class="wear-card__status">-</div>
+      <div id="wearStatusMeta" class="wear-card__meta">대기 중 ...</div>
+    </div>
+    <div class="wear-card__bottom">
+    <img id="wearStateImage" src="/static/image/wear_on.png" alt="Wear status" />
+  </div>
+  </div>
+</div>
+
+  <!-- 오른쪽 위: IR Holding -->
+  <div class="card grid-right-top">
+    <div id="irHoldingChart" class="chart-box"></div>
+    <div id="irHoldingMeta" class="major" style="margin-top:8px;text-align:center;"></div>
+    <div class="chart-legend">
+      <span class="legend-box apnea"></span> Apnea
+      <span class="legend-box invalid"></span> invalid
+    </div>
+  </div>
+
+  <!-- 오른쪽 아래: R Ratio -->
+  <div class="card grid-right-bottom">
+    <div id="ppgRratio" class="chart-box"></div>
+    <div id="ppgDecision" class="decision"></div>
+  </div>
+</section>
+
+    {{ items|json_script:"items-json" }}
+    <script>
+      window.ITEMS = JSON.parse(document.getElementById('items-json').textContent || '[]');
+    </script>
+    <script src="{% static 'js/state.js' %}" type="module"></script>
+    <script src="{% static 'js/api.js' %}" type="module"></script>
+    <script src="{% static 'js/popup.js' %}" type="module"></script>
+    <script src="{% static 'js/charts.js' %}" type="module"></script>
+    <script src="{% static 'js/main.js' %}" type="module"></script>
+  </div>
+
+  <div id="wearPopup" class="wear-popup wear-popup--hidden" aria-hidden="true">
+    <div class="wear-popup__inner">
+      <div id="wp-text" class="wear-popup__text">대기 중</div>
+      <div class="wear-popup__progress">
+        <div id="wp-progressbar" class="wear-popup__bar" style="width:0%"></div>
+      </div>
+      <div class="wear-popup__counter">
+        <span id="wp-seconds">0</span> / 84초
+      </div>
+    </div>
+    <button id="wp-close" class="wear-popup__close" aria-label="닫기">×</button>
+  </div>
+
+  <div id="wearOverlay" class="wear-overlay"></div>
+
+</body>
+</html>

@@ -1,0 +1,189 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  {% load static %}
+  <meta charset="UTF-8">
+  <title>Device Dashboard</title>
+  <link rel="stylesheet" href="{% static 'css/dashboard.css' %}">
+  <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
+
+
+  <style>
+    .kpis{display:flex;align-items:center;gap:12px}
+    .push-right{margin-left:auto}
+
+    /* 지도 */
+    #map {
+      height: 360px;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    /* 상단 메타 */
+    .meta-bar {display:flex; gap:12px; align-items:center; margin: 10px 0 0;}
+    .pill {background:#f3f4f6; padding:6px 10px; border-radius:999px; font-size:13px;}
+
+    /* ✅ IMU 섹션 크게 */
+    .imu-section {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+      margin-bottom: 14px;
+    }
+    .imu-title {
+      font-weight: 700;
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+    .imu-value {
+      display:flex;
+      align-items:baseline;
+      gap:10px;
+    }
+    .imu-level {
+      font-size: 34px;      /* ✅ 크게 */
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+    .imu-ts {
+      font-size: 13px;
+      color:#6b7280;
+    }
+    .imu-hint {
+      margin-top: 8px;
+      font-size: 13px;
+      color:#4b5563;
+      line-height: 1.45;
+    }
+
+    /* 지도 섹션 */
+    .map-title {
+      font-weight: 700;
+      font-size: 16px;
+      margin: 6px 0 10px;
+    }
+  </style>
+
+    <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={{ KAKAO_JS_KEY|cut:' ' }}&autoload=false"></script>
+
+</head>
+
+<body>
+  <div id="appRoot">
+    <header class="header">
+      <h1>Apnea detection dashboard</h1>
+      <img class="logo" src="{% static 'image/logo.png' %}" alt="logo" />
+    </header>
+
+    <!-- 선택된 사용자/디바이스 -->
+    <div class="meta-bar">
+      <div class="pill"><b>User</b>: {{ protectee_name }}</div>
+      <div class="pill"><b>Device</b>: {{ device_id }}</div>
+    </div>
+
+    <section class="kpis" style="margin-top:12px;">
+      <div class="kpi">
+        <div class="kpi-label">Device</div>
+        <div id="kpiDevice" class="kpi-value">{{ device_id }}</div>
+      </div>
+
+      <div class="kpi-right">
+        <div class="kpi kpi-compact">
+          <div class="kpi-label">
+            <span class="kpi-title">Baseline</span>
+            <div class="baseline-values">
+              <div class="pi-row">PI <span class="val" id="piMean">–</span> ± <span class="sd" id="piSd">–</span></div>
+              <div class="rmssd-row">RMSSD <span class="val" id="rmMean">–</span> ± <span class="sd" id="rmSd">–</span></div>
+            </div>
+          </div>
+        </div>
+        <button id="btnStartNew" type="button" class="btn-inline">측정 시작</button>
+      </div>
+    </section>
+
+    <section class="grid-split">
+      <!-- ✅ 왼쪽: IMU + 지도만 -->
+      <div class="card grid-left">
+        <!-- IMU 섹션 -->
+        <div class="imu-section">
+          <div class="imu-title">IMU 상태 (최근 3분)</div>
+          <div class="imu-value">
+            <div id="imuLevelText" class="imu-level">-</div>
+            <div id="imuTs" class="imu-ts"></div>
+          </div>
+        </div>
+
+        <!-- 지도 섹션 -->
+        <div class="map-title">현재 위치</div>
+        <div id="map"></div>
+
+        <script>
+        (function () {
+            function init() {
+            if (!window.kakao || !window.kakao.maps) {
+                console.error("[map] Kakao SDK not loaded");
+                document.getElementById("map").innerHTML =
+                "<div style='padding:12px;color:#6b7280;'>Kakao SDK가 로드되지 않았습니다.</div>";
+                return;
+            }
+
+            window.kakao.maps.load(function () {
+                var container = document.getElementById("map");
+                if (!container) return;
+
+                var center = new kakao.maps.LatLng(37.5665, 126.9780); // 서울시청
+                var map = new kakao.maps.Map(container, { center: center, level: 3 });
+                var marker = new kakao.maps.Marker({ position: center });
+                marker.setMap(map);
+
+                console.log("[map] Kakao map rendered OK");
+            });
+            }
+
+            // DOM이 다 그려진 다음 실행
+            if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", init);
+            } else {
+            init();
+            }
+        })();
+        </script>
+
+      </div>
+
+      <!-- 오른쪽 위: IR Holding -->
+      <div class="card grid-right-top">
+        <div id="irHoldingChart" class="chart-box"></div>
+        <div id="irHoldingMeta" class="major" style="margin-top:8px;text-align:center;"></div>
+        <div class="chart-legend">
+          <span class="legend-box apnea"></span> Apnea
+          <span class="legend-box invalid"></span> invalid
+        </div>
+      </div>
+
+      <!-- 오른쪽 아래: R Ratio -->
+      <div class="card grid-right-bottom">
+        <div id="ppgRratio" class="chart-box"></div>
+        <div id="ppgDecision" class="decision"></div>
+      </div>
+    </section>
+
+    {{ items|json_script:"items-json" }}
+    <script>
+      window.ITEMS = JSON.parse(document.getElementById('items-json').textContent || '[]');
+      window.DASH_DEVICE_ID = "{{ device_id|escapejs }}";
+      window.DASH_USER_NAME = "{{ protectee_name|escapejs }}";
+
+      // ✅ 지도 기본 위치 (한국/서울)
+      window.MAP_DEFAULT_CENTER = { lat: 37.5665, lon: 126.9780 }; // Seoul City Hall
+      window.MAP_DEFAULT_ZOOM = 13;
+    </script>
+
+    <script src="{% static 'js/state.js' %}" type="module"></script>
+    <script src="{% static 'js/api.js' %}" type="module"></script>
+    <script src="{% static 'js/charts.js' %}" type="module"></script>
+    <script src="{% static 'js/main_device.js' %}" type="module"></script>
+  </div>
+</body>
+</html>
