@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends "base.html" %}
 
 {% block nav_home_active %}active{% endblock %}
 {% block page_class %}page-home{% endblock %}
@@ -8,19 +8,28 @@
   <!-- 왼쪽 리스트 -->
   <div class="left-list">
     <div class="search-box">
-      <input type="text" placeholder="검색어를 입력하세요"  id="userSearchInput"/>
+      <input
+        type="text"
+        placeholder="검색어를 입력하세요"
+        id="userSearchInput"
+      />
     </div>
 
     <div class="user-list" id="userList">
       {% for u in users %}
-      <div class="user-card">
+      <!-- device_id를 data 속성에 심기 -->
+      <div class="user-card" data-device-id="{{ u.device_id }}">
         <div class="info">
           <div class="name">
             {{ u.name }}
             <span class="sub">{{ u.gender }} · {{ u.age }}세</span>
           </div>
-          <div class="desc">{{ u.address }}<br>{{ u.phone }}</div>
+          <div class="desc">
+            {{ u.address }}<br />
+            {{ u.phone }}
+          </div>
         </div>
+
         <div class="status {% if u.status == '활동중' %}on{% else %}off{% endif %}"></div>
       </div>
       {% endfor %}
@@ -34,32 +43,47 @@
 
       <div class="data-section">
         <h3>PPG 위험 지수 (imu_danger_level)</h3>
-        <p>PPG 센서를 통해 측정된 심박수 분석에 따라, 80 이상을 초과하면 위험 상태로 판단하는 지표입니다. 사용자는 이 수치를 통해 자신의 신체 긴장도나 스트레스 상태를 실시간으로 확인할 수 있습니다.</p>
+        <p>
+          PPG 센서를 통해 측정된 심박수 분석에 따라, 80 이상을 초과하면 위험 상태로 판단하는 지표입니다.
+          사용자는 이 수치를 통해 자신의 신체 긴장도나 스트레스 상태를 실시간으로 확인할 수 있습니다.
+        </p>
       </div>
 
       <div class="data-section">
         <h3>심박변이도(HRV)</h3>
-        <p>심박변이도(HRV)는 심장 박동 사이의 간격 변화를 분석해 신체의 스트레스 상태를 파악하는 지표입니다. 변이도가 낮으면 신체가 긴장 상태일 가능성이 높습니다.</p>
+        <p>
+          심박변이도(HRV)는 심장 박동 사이의 간격 변화를 분석해 신체의 스트레스 상태를 파악하는 지표입니다.
+          변이도가 낮으면 신체가 긴장 상태일 가능성이 높습니다.
+        </p>
       </div>
 
       <div class="data-section">
         <h3>스트레스 지수</h3>
-        <p>스트레스 지수를 0~100까지의 점수로 나타낸 지표입니다. 스트레스 지수가 80 이상이면 위험 상황으로 판단할 수 있습니다.</p>
+        <p>
+          스트레스 지수를 0~100까지의 점수로 나타낸 지표입니다. 스트레스 지수가 80 이상이면 위험 상황으로
+          판단할 수 있습니다.
+        </p>
       </div>
 
       <div class="data-section">
         <h3>외부 충격 지수(imu_danger_level)</h3>
-        <p>IMU 센서를 통해 측정된 데이터로, 충격이 가해졌을 때 수집됩니다. 1~5 사의의 지수로 높은 숫자일 수록 강한 충격을 의미합니다. 4이상을 위험 상황이라고 예측할 수 있습니다. </p>
+        <p>
+          IMU 센서를 통해 측정된 데이터로, 충격이 가해졌을 때 수집됩니다. 1~5 사이의 지수로 높은 숫자일수록
+          강한 충격을 의미합니다. 4 이상을 위험 상황이라고 예측할 수 있습니다.
+        </p>
       </div>
 
       <div class="data-section">
         <h3>위치</h3>
-        <p>보호 대상자의 위치를 확인하여 보호활동에 도움을 받을 수 있습니다. </p>
+        <p>보호 대상자의 위치를 확인하여 보호활동에 도움을 받을 수 있습니다.</p>
       </div>
 
       <div class="data-section">
         <h3>안전구역 위치 여부</h3>
-        <p>보호 대상자가 일상적으로 위치하는 구역은 안전구역으로 설정했습니다. 실시간으로 위치를 추적하여 안전구역을 벗어나면 이상 경로라고 판단할 수 있습니다. </p>
+        <p>
+          보호 대상자가 일상적으로 위치하는 구역은 안전구역으로 설정했습니다. 실시간으로 위치를 추적하여
+          안전구역을 벗어나면 이상 경로라고 판단할 수 있습니다.
+        </p>
       </div>
 
       <div class="data-section">
@@ -69,154 +93,176 @@
     </div>
   </div>
 </div>
+
 <script>
-document.addEventListener('DOMContentLoaded', () => {
-  const searchInput = document.getElementById('userSearchInput');
-  const userList = document.getElementById('userList');
-  const userCards = Array.from(userList.getElementsByClassName('user-card'));
+  document.addEventListener("DOMContentLoaded", () => {
+    const searchInput = document.getElementById("userSearchInput");
+    const userList = document.getElementById("userList");
+    const userCards = Array.from(userList.getElementsByClassName("user-card"));
 
-  searchInput.addEventListener('input', () => {
-    const query = searchInput.value.toLowerCase();
+    // 카드 클릭 → 디바이스별 대시보드로 이동 
+    userList.addEventListener("click", (e) => {
+      const card = e.target.closest(".user-card");
+      if (!card) return;
 
-    const matched = [];
-    const unmatched = [];
+      const deviceId = card.dataset.deviceId;
+      console.log("[home] click deviceId =", deviceId);
 
-    userCards.forEach(card => {
-      // 이름만 가져오기 위해 .name > textNode 사용
-      const nameNode = card.querySelector('.name').childNodes[0];
-      const name = nameNode ? nameNode.textContent.trim().toLowerCase() : '';
-
-      if(name.includes(query)) {
-        matched.push(card);
-      } else {
-        unmatched.push(card);
+      if (!deviceId) {
+        alert("device_id가 비어있어요. Protectee.device_id가 내려오는지 확인해줘!");
+        return;
       }
+
+      // ppg prefix로 include 되어있다는 전제 (/ppg/...)
+      window.location.href = `/ppg/dashboard/device/${encodeURIComponent(deviceId)}/`;
     });
 
-    // user-list 재정렬
-    userList.innerHTML = '';
-    matched.forEach(card => userList.appendChild(card));
-    unmatched.forEach(card => userList.appendChild(card));
+    // 검색: 이름 기준으로 매칭된 카드 상단 정렬
+    searchInput.addEventListener("input", () => {
+      const query = searchInput.value.toLowerCase();
+      const matched = [];
+      const unmatched = [];
+
+      userCards.forEach((card) => {
+        const nameNode = card.querySelector(".name").childNodes[0];
+        const name = nameNode ? nameNode.textContent.trim().toLowerCase() : "";
+
+        if (name.includes(query)) matched.push(card);
+        else unmatched.push(card);
+      });
+
+      userList.innerHTML = "";
+      matched.forEach((card) => userList.appendChild(card));
+      unmatched.forEach((card) => userList.appendChild(card));
+    });
   });
-});
 </script>
 
-
-
 <style>
+  /* 전체 컨테이너 */
+  .home-container {
+    display: flex;
+    gap: 24px;
+    padding: 20px;
+    background: #fff;
+    height: calc(100vh - 60px);
+    box-sizing: border-box;
+    align-items: stretch;
+  }
 
+  /* 왼쪽 리스트 */
+  .left-list {
+    width: 340px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+    flex-shrink: 0;
+    height: 100%;
+  }
 
-/* 전체 컨테이너 */
-.home-container {
-  display: flex;
-  gap: 24px;
-  padding: 20px;
-  background: #fff;
-  height: calc(100vh - 60px);
-  box-sizing: border-box;
-  align-items: stretch; /* 왼쪽과 오른쪽 모두 높이 맞춤 */
-}
+  /* 검색창 */
+  .search-box input {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background: #fff;
+  }
 
-/* 왼쪽 리스트 */
-.left-list {
-  width: 340px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  overflow-y: auto;
-  flex-shrink: 0;
-  height: 100%; /* 화면 거의 아래까지 확장 */
-}
+  /* 사용자 리스트 전체 */
+  .user-list {
+    flex-grow: 1;
+    background: #f5f5f5;
+    border-radius: 10px;
+    overflow-y: auto;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  }
 
-/* 검색창 */
-.search-box input {
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  background: #fff;
-}
+  /* 개별 사용자 카드 */
+  .user-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid #f0f0f0;
 
-/* 사용자 리스트 전체 */
-.user-list {
-  flex-grow: 1;
-  background: #F5F5F5;
-  border-radius: 10px;
-  overflow-y: auto;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-}
+    /* 클릭 가능한 UI */
+    cursor: pointer;
+    user-select: none;
+  }
+  .user-card:hover {
+    background: #eeeeee;
+  }
+  .user-card:last-child {
+    border-bottom: none;
+  }
 
-/* 개별 사용자 카드 */
-.user-card {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px 16px;
-  border-bottom: 1px solid #f0f0f0;
-}
-.user-card:last-child { border-bottom: none; }
+  .user-card .name {
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .user-card .name .sub {
+    font-weight: 400;
+    color: #777;
+    font-size: 13px;
+    margin-left: 6px;
+  }
+  .user-card .desc {
+    font-size: 12px;
+    color: #666;
+    line-height: 1.5;
+  }
 
-.user-card .name {
-  font-weight: 600;
-  font-size: 15px;
-}
-.user-card .name .sub {
-  font-weight: 400;
-  color: #777;
-  font-size: 13px;
-  margin-left: 6px;
-}
-.user-card .desc {
-  font-size: 12px;
-  color: #666;
-  line-height: 1.5;
-}
+  /* 상태 표시 점 */
+  .status {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+  .status.on {
+    background: #e11d48;
+  }
+  .status.off {
+    background: #d1d5db;
+  }
 
-/* 상태 표시 점 */
-.status {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-.status.on { background: #e11d48; }
-.status.off { background: #d1d5db; }
+  /* 오른쪽 패널 */
+  .right-panel {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    overflow-y: auto;
+    height: 100%;
+    overflow: hidden;
+  }
 
-/* 오른쪽 패널 */
-.right-panel {
-  flex: 1;
-  display: flex;
-  justify-content: center; /* 화면 거의 꽉 차게 중앙 정렬 */
-  align-items: flex-start;
-  overflow-y: auto; 
-  height: 100%;
-  overflow: hidden;
-}
+  .right-panel .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    flex-shrink: 0;
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
 
-.right-panel .card {
-  background: #fff;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-  width: 100%; /* 왼쪽부터 오른쪽까지 꽉 채움 */
-  max-width: none; /* 폭 제한 제거 */
-  height: 100%;
-  flex-shrink: 0; 
-  overflow-y: auto; 
-  box-sizing: border-box;
-}
-
-.data-section {
-  margin-top: 30px;
-}
-.data-section h3 {
-  font-size: 20px;
-  font-weight: 600;
-  margin-bottom: 20px;
-}
-.data-section p {
-  font-size: 15px;
-  color: #555;
-  line-height: 1.6;
-}
+  .data-section {
+    margin-top: 30px;
+  }
+  .data-section h3 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 20px;
+  }
+  .data-section p {
+    font-size: 15px;
+    color: #555;
+    line-height: 1.6;
+  }
 </style>
 {% endblock %}
