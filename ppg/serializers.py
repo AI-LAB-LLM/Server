@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from monitoring.utils import normalize_device_id
 
 # Ingest (요청)
 class IngestRequestSerializer(serializers.Serializer):
@@ -7,6 +8,9 @@ class IngestRequestSerializer(serializers.Serializer):
     ppg_green = serializers.ListField(child=serializers.FloatField())
     ppg_ir    = serializers.ListField(child=serializers.FloatField(), allow_empty=False)
     ppg_red   = serializers.ListField(child=serializers.FloatField(), allow_empty=False)
+
+    def validate_device_id(self, value):
+        return normalize_device_id(value)
 
 # Ingest (응답)
 class IngestResponseSerializer(serializers.Serializer):
