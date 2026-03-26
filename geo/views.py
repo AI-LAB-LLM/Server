@@ -2,36 +2,36 @@ from drf_spectacular.utils import extend_schema, OpenApiExample
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-
 from monitoring.models import Protectee
 from .models import GeoData
-from .serializers import GeoDataIngestSerializer
+from .serializers import (
+    GeoDataIngestSerializer,
+    GeoDataIngestResponseSerializer,
+)
 
 
 class GeoDataIngestView(APIView):
     """
-    POST /api/v1/geo/data
+    POST /api/geo/data
     """
 
     @extend_schema(
         request=GeoDataIngestSerializer,
-        responses={201: GeoDataIngestSerializer},
+        responses={201: GeoDataIngestResponseSerializer},
         summary="GEO 위치 데이터 수신",
         description=(
-            "위치 데이터를 배열 형태로 수신\n\n"
+            "위치 데이터를 배열 형태로 수신합니다.\n\n"
             "필드 설명:\n"
             "- device_id (string): 워치 고유 ID\n"
             "- locations (array): 위치 데이터 배열\n\n"
-
             "locations 내부 필드:\n"
-            "- timestamp (string, ISO 8601 형식): 예) 2026-03-26T14:30:00+09:00\n"
+            "- timestamp (long, UNIX ms)\n"
             "- pos_success (boolean): 위치 수신 성공 여부\n"
             "- pos_info (object, optional): pos_success=true일 때만 포함\n\n"
-
             "pos_info 내부 필드:\n"
-            "- longitude (float): 경도\n"
-            "- latitude (float): 위도\n"
-            "- accuracy_h (float): 정확도\n\n"
+            "- longitude (double): 경도\n"
+            "- latitude (double): 위도\n"
+            "- accuracy_h (double): 정확도\n\n"
         ),
         examples=[
             OpenApiExample(
@@ -40,7 +40,7 @@ class GeoDataIngestView(APIView):
                     "device_id": "5456a4dfb33d71d5",
                     "locations": [
                         {
-                            "timestamp": "2026-03-26T14:30:00+09:00",
+                            "timestamp": 1672531200000,
                             "pos_success": True,
                             "pos_info": {
                                 "longitude": 126.9780,
@@ -58,7 +58,7 @@ class GeoDataIngestView(APIView):
                     "device_id": "5456a4dfb33d71d5",
                     "locations": [
                         {
-                            "timestamp": "2026-03-26T14:31:00+09:00",
+                            "timestamp": 1672531200000,
                             "pos_success": False
                         }
                     ]
@@ -88,7 +88,7 @@ class GeoDataIngestView(APIView):
             geo_row = GeoData.objects.create(
                 protectee=protectee,
                 device_id=device_id,
-                timestamp=item["timestamp"],
+                timestamp=item["timestamp"],  # 이미 UTC datetime 객체
                 pos_success=pos_success,
                 longitude=pos_info["longitude"] if pos_success and pos_info else None,
                 latitude=pos_info["latitude"] if pos_success and pos_info else None,
@@ -96,13 +96,9 @@ class GeoDataIngestView(APIView):
             )
             created_rows.append(geo_row.id)
 
-        return Response(
-            {
-                "status": "ok",
-                "protectee_id": protectee.id,
-                "protectee_created": created,
-                "saved_count": len(created_rows),
-                "geo_data_ids": created_rows,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        response_data = {
+            "status": "ok",
+            "saved_count": len(created_rows),
+        }
+
+        return Response(response_data, status=status.HTTP_201_CREATED)
