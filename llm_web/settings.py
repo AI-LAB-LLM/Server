@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     "dbchat",   # DB 질의
     "monitoring", # API 연동 관련 
     "ppg", #PPG팀 서버 통합용 
+    "geo", #GEO팀 실시간 데이터 수신용
 ]
 
 MIDDLEWARE = [
@@ -138,3 +139,5 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
+
+KAKAO_JS_KEY = os.getenv("KAKAO_JS_KEY", "")
