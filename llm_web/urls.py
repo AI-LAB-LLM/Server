@@ -1,10 +1,10 @@
 from django.contrib import admin
 from django.urls import path, include
-from ppg.views_api import IngestView, RecordsView, BaselineSessionView
+from ppg.views_api import IngestView, RecordsView, BaselineSessionView, EventStatusView
 from monitoring.views import (
     HealthCheckView,
     IMUAlertView,
-    GEOAlertView, 
+    GEOAlertView,
 )
 from drf_spectacular.views import (
     SpectacularAPIView,
@@ -22,12 +22,12 @@ urlpatterns = [
     # =========================
     # Sensor APIs
     # =========================
-    path("api/v1/health", HealthCheckView.as_view()),
     path("api/v1/events/imu-alert", IMUAlertView.as_view()),
-    path("api/v1/events/geo-alert", GEOAlertView.as_view()), 
+    path("api/v1/events/geo-alert", GEOAlertView.as_view()),  
+    path("api/v1/geo/", include("geo.urls")),                 # 새 GEO 데이터 API
 
     # =========================
-    # Swagger / OpenAPI
+    # Swagger / OpenAPI (기존)
     # =========================
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
@@ -36,11 +36,30 @@ urlpatterns = [
         name="swagger-ui",
     ),
 
-     # ---- API (DRF) ----
-    path("api/ingest/",  IngestView.as_view(),  name="api-ingest"),
+    # =========================
+    # Swagger / OpenAPI (GEO 전용)
+    # =========================
+    path(
+        "api/geo/schema/",
+        SpectacularAPIView.as_view(
+            urlconf="geo.urls",
+            custom_settings={
+                "TITLE": "GEO Data API",
+                "DESCRIPTION": "GEO 위치 데이터 송수신 전용 문서",
+                "VERSION": "1.0.0",
+            },
+        ),
+        name="geo-schema",
+    ),
+    path(
+        "api/geo/docs/",
+        SpectacularSwaggerView.as_view(url_name="geo-schema"),
+        name="geo-swagger-ui",
+    ),
+
+    # ---- API (DRF) ----
+    path("api/ingest/", IngestView.as_view(), name="api-ingest"),
     path("api/records/", RecordsView.as_view(), name="api-records"),
-    path('api/baseline/', BaselineSessionView.as_view(), name='baseline-session'),
-
-   
+    path("api/baseline/", BaselineSessionView.as_view(), name="baseline-session"),
+    path("api/event_status/", EventStatusView.as_view(), name="api_event_status"),
 ]
-
