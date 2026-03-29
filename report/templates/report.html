@@ -8,20 +8,31 @@
 {% block content %}
 <main class="main">
   <div style="display:flex; gap:20px; align-items:flex-start;">
+
     <!-- 입력 Form -->
-    <div class="form-card" style="padding:20px; border:1px solid #ccc; border-radius:8px; max-width:400px; flex-shrink:0; background:#fff;">
-      <form method="get" action="{% url 'report:report_page' %}" style="display:flex; flex-direction:column; gap:10px; position:relative;">
+    <div class="form-card"
+         style="padding:20px; border:1px solid #ccc; border-radius:8px;
+                max-width:400px; flex-shrink:0; background:#fff;">
+      <form method="get" action="{% url 'report:report_page' %}"
+            style="display:flex; flex-direction:column; gap:10px; position:relative;">
         <div style="position:relative;">
           <label for="name">보호대상자</label><br>
-          <input id="name" name="name" type="text" value="{{ request.GET.name|default:'' }}" style="width:100%;" autocomplete="off"/>
+          <input id="name" name="name" type="text"
+                 value="{{ request.GET.name|default:'' }}"
+                 style="width:100%;" autocomplete="off"/>
           <!-- 자동완성 리스트 -->
-          <ul id="name-list" style="position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #ccc; border-top:none; max-height:150px; overflow-y:auto; list-style:none; margin:0; padding:0; display:none; z-index:10;"></ul>
+          <ul id="name-list"
+              style="position:absolute; top:100%; left:0; right:0;
+                     background:#fff; border:1px solid #ccc; border-top:none;
+                     max-height:150px; overflow-y:auto; list-style:none;
+                     margin:0; padding:0; display:none; z-index:10;"></ul>
         </div>
 
         <div>
           <label for="period">날짜 선택</label><br>
-          <!-- 👇 클릭 시 캘린더 뜨는 입력창 -->
-          <input id="period" name="period" type="date" value="{{ request.GET.period|default:'' }}" style="width:100%;" />
+          <input id="period" name="period" type="date"
+                 value="{{ request.GET.period|default:'' }}"
+                 style="width:100%;" />
         </div>
 
         <button type="submit" class="btn" style="align-self:flex-start;">리포트 생성</button>
@@ -30,15 +41,50 @@
 
     <!-- AI 리포트 -->
     {% if report %}
-    <div style="flex-grow:1; padding:15px; border:1px solid #aaa; border-radius:8px; background:#f9f9f9; max-height:800px; overflow-y:auto;">
-      <h3>{{ request.GET.period }} 일일 보고: {{ request.GET.name }}</h3>
-      <pre style="white-space:pre-wrap; font-family:inherit;">{{ report }}</pre>
+    <div class="report-panel">
+      <h3 class="report-title">
+        {{ request.GET.period }} 일일 보고: {{ request.GET.name }}
+      </h3>
+
+      <div class="report-body">
+{{ report }}
+      </div>
     </div>
     {% endif %}
+
   </div>
 </main>
 
-<!-- ==================== JS Script ==================== -->
+<style>
+  /* 리포트 패널: 화면에 맞춰 자동 확장, 텍스트 절대 잘림 방지 */
+  .report-panel {
+    flex: 1 1 auto;
+    max-height: 80vh;           /* 화면 기준 동적 높이 */
+    padding: 15px;
+    border: 1px solid #aaa;
+    border-radius: 8px;
+    background: #f9f9f9;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    overflow-y: auto;           /* 전체를 스크롤 가능 */
+  }
+
+  .report-title {
+    flex-shrink: 0;
+    margin: 0 0 10px 0;
+  }
+
+  .report-body {
+    white-space: pre-wrap;      /* 줄바꿈/공백 유지 */
+    font-family: inherit;
+    overflow-y: auto;           /* 내용만 스크롤 */
+    flex-grow: 1;
+    min-height: 0;
+    padding-right: 8px;
+  }
+</style>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
   const nameInput = document.getElementById('name');
@@ -90,7 +136,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
-  // 날짜 선택 시 자동 포맷 (yyyy-mm-dd)
+  // 날짜 선택 시 yyyy-mm-dd 포맷 유지
   const periodInput = document.getElementById('period');
   periodInput.addEventListener('change', function() {
     const selectedDate = new Date(this.value);
