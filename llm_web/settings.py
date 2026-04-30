@@ -48,8 +48,10 @@ INSTALLED_APPS = [
     "report",   # 일일 리포트
     "dbchat",   # DB 질의
     "monitoring", # API 연동 관련 
-    "ppg", #PPG팀 서버 통합용 
-    "geo", #GEO팀 실시간 데이터 수신용
+    "ppg", #PPG 서버 통합용 
+    "geo", #GEO 실시간 데이터 수신용
+    "ppg_n", #새로운 모델 연동 
+    "imu", # IMU 연동
 ]
 
 MIDDLEWARE = [
