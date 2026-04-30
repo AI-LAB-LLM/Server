@@ -18,6 +18,8 @@ urlpatterns = [
     path("dbchat/", include("dbchat.urls")),
     path("report/", include("report.urls", namespace="report")),
     path("ppg/", include("ppg.urls")),
+    path("ppg-n/", include("ppg_n.urls")),
+
 
     # =========================
     # Sensor APIs
@@ -25,6 +27,7 @@ urlpatterns = [
     path("api/v1/events/imu-alert", IMUAlertView.as_view()),
     path("api/v1/events/geo-alert", GEOAlertView.as_view()),  
     path("api/v1/geo/", include("geo.urls")),                 # 새 GEO 데이터 API
+    path("api/v1/events/", include("imu.urls")),
 
     # =========================
     # Swagger / OpenAPI (기존)
