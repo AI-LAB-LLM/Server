@@ -52,8 +52,8 @@ INSTALLED_APPS = [
     "monitoring", # API 연동 관련 
     "ppg", #PPG 서버 통합용 
     "geo", #GEO 실시간 데이터 수신용
-    "ppg_n", #새로운 모델 연동 
     "imu", # IMU 연동
+    "nppg", #PPG 새 모델 연동
 ]
 
 MIDDLEWARE = [
