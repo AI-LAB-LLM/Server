@@ -57,3 +57,39 @@ class GeoDataIngestSerializer(serializers.Serializer):
 class GeoDataIngestResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
     saved_count = serializers.IntegerField()
+
+
+# GPR 보정용 단일 GEO 입력 Serializer
+class GeoProcessedAlertSerializer(serializers.Serializer):
+    device_id = serializers.CharField(
+        max_length=100,
+        help_text="워치 고유 ID"
+    )
+    timestamp = serializers.DateTimeField
+
+    latitude = serializers.FloatField(
+        required=False,
+        allow_null=True,
+        help_text="원본 GPS 위도. GPS 수집 실패 시 null 가능"
+    )
+    longitude = serializers.FloatField(
+        required=False,
+        allow_null=True,
+        help_text="원본 GPS 경도. GPS 수집 실패 시 null 가능"
+    )
+
+    def validate_device_id(self, value):
+        return normalize_device_id(value)
+
+    def validate(self, attrs):
+        latitude = attrs.get("latitude")
+        longitude = attrs.get("longitude")
+
+        if (latitude is None and longitude is not None) or (
+            latitude is not None and longitude is None
+        ):
+            raise serializers.ValidationError(
+                "latitude와 longitude는 둘 다 있거나, 둘 다 null이어야 합니다."
+            )
+
+        return attrs
