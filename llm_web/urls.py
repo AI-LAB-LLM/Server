@@ -1,15 +1,15 @@
 from django.contrib import admin
 from django.urls import path, include
-from ppg.views_api import IngestView, RecordsView, BaselineSessionView, EventStatusView
-from monitoring.views import (
-    HealthCheckView,
-    IMUAlertView,
-    GEOAlertView,
+from ppg.views_api import (
+    IngestView,
+    RecordsView,
+    BaselineSessionView,
+    EventStatusView,
 )
-from drf_spectacular.views import (
-    SpectacularAPIView,
-    SpectacularSwaggerView,
-)
+from monitoring.views import IMUAlertView
+from geo.views import GEOAlertView
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -19,14 +19,14 @@ urlpatterns = [
     path("report/", include("report.urls", namespace="report")),
     path("ppg/", include("ppg.urls")),
     path("nppg/", include("nppg.urls")),
-
+    path("apnea/", include("apnea.urls")),
 
     # =========================
     # Sensor APIs
     # =========================
     path("api/v1/events/imu-alert", IMUAlertView.as_view()),
-    path("api/v1/events/geo-alert", GEOAlertView.as_view()),  
-    path("api/v1/geo/", include("geo.urls")),                 # 새 GEO 데이터 API
+    path("api/v1/events/geo-alert", GEOAlertView.as_view()),
+    path("api/v1/geo/", include("geo.urls")),
     path("api/v1/events/", include("imu.urls")),
 
     # =========================
