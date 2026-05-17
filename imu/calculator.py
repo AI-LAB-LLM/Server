@@ -1,12 +1,9 @@
 import json
-import math
 from collections import deque
 from pathlib import Path
 from typing import Dict, List, Tuple
 import numpy as np
-from pathlib import Path
 from django.conf import settings
-
 try:
     from tflite_runtime.interpreter import Interpreter
 except ImportError:
@@ -18,6 +15,9 @@ MODEL_DIR = Path(settings.MEDIA_ROOT) / "models" / "imu"
 MODEL_PATH = MODEL_DIR / "model_classification.tflite"
 SCALER_PATH = MODEL_DIR / "scaler.json"
 
+EXPECTED_SAMPLE_RATE = 25
+EXPECTED_WINDOW_SEC = 12
+EXPECTED_SAMPLE_COUNT = EXPECTED_SAMPLE_RATE * EXPECTED_WINDOW_SEC
 
 NUM_CLASSES = 5
 MODEL_OUTPUT_IS_PROBS = True
@@ -29,7 +29,7 @@ MARGIN_P4 = 0.18
 GATE_Z_STD = 0.80
 GATE_Z_DSTD = 0.90
 
-TH_ACTIVITY = 9.85
+TH_ACTIVITY = 9.90
 TH_D_ACTIVITY = 0.15
 TH_ACTIVE_STD = 1.0
 TH_ACTIVE_DSTD = 1.2
@@ -41,7 +41,7 @@ MOD_DSTD_MIN = 0.30
 
 HYST_UP_CONSEC = 2
 HYST_DOWN_CONSEC = 1
-TH_P3_UP = 0.55
+TH_P3_UP = 0.45
 TH_P3_DOWN = 0.45
 MARGIN_P3_UP = 0.10
 MARGIN_P3_DOWN = 0.05
@@ -54,7 +54,7 @@ JERK_RATIO_TH = 1.30
 
 class ImuState:
     def __init__(self):
-        self.recent_p = deque(maxlen=3)
+        self.recent_p = deque(maxlen=2)
         self.recent_x = deque(maxlen=3)
         self.recent_grade_cand = deque(maxlen=3)
         self.consec3_cond = 0
@@ -69,7 +69,6 @@ def get_state(protectee_id: int) -> ImuState:
     if protectee_id not in _STATE_BY_PROTECTEE:
         _STATE_BY_PROTECTEE[protectee_id] = ImuState()
     return _STATE_BY_PROTECTEE[protectee_id]
-
 
 
 _interpreter = None
@@ -125,21 +124,23 @@ def load_interpreter():
     return _interpreter, _input_details, _output_details
 
 
-
 # 수학 유틸
 def softmax(logits: np.ndarray) -> np.ndarray:
     logits = logits.astype(np.float32)
     m = np.max(logits)
     exps = np.exp(logits - m)
     total = np.sum(exps)
+
     if total == 0:
         return exps
+
     return exps / total
 
 
 def mean_of_deque(q: deque) -> np.ndarray:
     if not q:
         return np.array([], dtype=np.float32)
+
     return np.mean(np.stack(list(q), axis=0), axis=0).astype(np.float32)
 
 
@@ -150,15 +151,26 @@ def median3(a: int, b: int, c: int) -> int:
 def extract_features(samples: List[List[float]]) -> np.ndarray:
     """
     samples: [[x, y, z], ...] 길이 300
-    return: [svm_mean, svm_std, d_svm_mean, d_svm_std]
+
+    현재 서버 기준:
+    - sample_rate = 25Hz
+    - window_sec = 12초
+    - sample_count = 300개
+
+    return:
+    [svm_mean, svm_std, d_svm_mean, d_svm_std]
     """
     arr = np.array(samples, dtype=np.float32)
 
     if arr.ndim != 2 or arr.shape[1] != 3:
         raise ValueError(f"samples는 shape (N, 3)이어야 합니다. 현재 shape={arr.shape}")
 
-    if arr.shape[0] < 4:
-        raise ValueError("samples 길이는 최소 4 이상이어야 합니다.")
+    if arr.shape[0] != EXPECTED_SAMPLE_COUNT:
+        raise ValueError(
+            f"samples 길이는 반드시 {EXPECTED_SAMPLE_COUNT}개여야 합니다. "
+            f"현재 {arr.shape[0]}개입니다. "
+            f"기준: {EXPECTED_SAMPLE_RATE}Hz * {EXPECTED_WINDOW_SEC}초"
+        )
 
     svm = np.sqrt(np.sum(arr * arr, axis=1))
     dsvm = np.abs(np.diff(svm))
@@ -190,6 +202,7 @@ def predict_probs(raw4: np.ndarray) -> np.ndarray:
 
     if MODEL_OUTPUT_IS_PROBS:
         return out
+
     return softmax(out)
 
 
@@ -265,19 +278,24 @@ def calculate_grade_from_probs(
             if is_jerk_like:
                 state.consec3_cond = 0
                 state.consec2_cond += 1
+
                 if state.consec2_cond >= HYST_DOWN_CONSEC:
                     state.state23 = 2
             else:
                 if allow3_up and is_active_any:
                     state.consec3_cond += 1
                     state.consec2_cond = 0
+
                     if state.consec3_cond >= HYST_UP_CONSEC:
                         state.state23 = 3
+
                 elif allow3_down or in_moderate_band:
                     state.consec2_cond += 1
                     state.consec3_cond = 0
+
                     if state.consec2_cond >= HYST_DOWN_CONSEC:
                         state.state23 = 2
+
                 else:
                     state.consec3_cond = 0
                     state.consec2_cond = 0
@@ -296,6 +314,7 @@ def calculate_grade_from_probs(
             grade = min(g_cand, 3)
 
             strong3 = (mp3 >= STRONG_P3) and ((mp3 - max_low) >= STRONG_MARGIN_P3)
+
             if grade == 3 and in_moderate_band and not strong3:
                 grade = 2
 
@@ -305,6 +324,12 @@ def calculate_grade_from_probs(
 def calculate_imu_level(protectee_id: int, samples: List[List[float]]) -> dict:
     """
     외부에서 호출할 메인 함수.
+
+    입력 기준:
+    - 25Hz
+    - 12초
+    - 300 samples
+
     return 예:
     {
         "level": 2,
@@ -318,6 +343,9 @@ def calculate_imu_level(protectee_id: int, samples: List[List[float]]) -> dict:
 
     return {
         "level": level,
+        "sample_rate": EXPECTED_SAMPLE_RATE,
+        "window_sec": EXPECTED_WINDOW_SEC,
+        "sample_count": EXPECTED_SAMPLE_COUNT,
         "features": {
             "svm_mean": float(raw4[0]),
             "svm_std": float(raw4[1]),
