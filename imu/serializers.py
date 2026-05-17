@@ -1,9 +1,13 @@
 from datetime import timezone
-
 from rest_framework import serializers
 from monitoring.models import Protectee
 from monitoring.utils import normalize_device_id
 from .models import ImuData
+
+
+EXPECTED_SAMPLE_RATE = 25
+EXPECTED_WINDOW_SEC = 12
+EXPECTED_SAMPLE_COUNT = EXPECTED_SAMPLE_RATE * EXPECTED_WINDOW_SEC  # 300
 
 
 def to_utc_datetime(dt):
@@ -18,27 +22,77 @@ class ImuDataIngestSerializer(serializers.Serializer):
     window_index = serializers.IntegerField()
     start_timestamp = serializers.DateTimeField()
     end_timestamp = serializers.DateTimeField()
-    sample_rate = serializers.IntegerField(default=50)
-    window_sec = serializers.IntegerField(default=6)
+
+    # 기본값 25Hz, 12초
+    sample_rate = serializers.IntegerField(default=EXPECTED_SAMPLE_RATE)
+    window_sec = serializers.IntegerField(default=EXPECTED_WINDOW_SEC)
 
     # samples = [[x, y, z], [x, y, z], ...]
+    # 25Hz * 12초 = 300개
     samples = serializers.ListField(
         child=serializers.ListField(
             child=serializers.FloatField(),
             min_length=3,
             max_length=3,
         ),
-        min_length=300,
-        max_length=300,
+        min_length=EXPECTED_SAMPLE_COUNT,
+        max_length=EXPECTED_SAMPLE_COUNT,
     )
 
     def validate_device_id(self, value):
         return normalize_device_id(value)
 
+    def validate(self, attrs):
+        sample_rate = attrs.get("sample_rate", EXPECTED_SAMPLE_RATE)
+        window_sec = attrs.get("window_sec", EXPECTED_WINDOW_SEC)
+        samples = attrs.get("samples", [])
+
+        if sample_rate != EXPECTED_SAMPLE_RATE:
+            raise serializers.ValidationError({
+                "sample_rate": (
+                    f"IMU sample_rate는 반드시 {EXPECTED_SAMPLE_RATE}Hz여야 합니다. "
+                    f"현재 {sample_rate}Hz입니다."
+                )
+            })
+
+        if window_sec != EXPECTED_WINDOW_SEC:
+            raise serializers.ValidationError({
+                "window_sec": (
+                    f"IMU window_sec는 반드시 {EXPECTED_WINDOW_SEC}초여야 합니다. "
+                    f"현재 {window_sec}초입니다."
+                )
+            })
+
+        expected_count = sample_rate * window_sec
+
+        if len(samples) != expected_count:
+            raise serializers.ValidationError({
+                "samples": (
+                    f"IMU samples는 반드시 {expected_count}개여야 합니다. "
+                    f"현재 {len(samples)}개입니다. "
+                    f"기준: {sample_rate}Hz * {window_sec}초"
+                )
+            })
+
+        start_timestamp = attrs.get("start_timestamp")
+        end_timestamp = attrs.get("end_timestamp")
+
+        if start_timestamp and end_timestamp:
+            start_utc = to_utc_datetime(start_timestamp)
+            end_utc = to_utc_datetime(end_timestamp)
+
+            if end_utc <= start_utc:
+                raise serializers.ValidationError({
+                    "end_timestamp": "end_timestamp는 start_timestamp보다 뒤 시간이어야 합니다."
+                })
+
+        return attrs
+
     def validate_samples(self, value):
-        if len(value) != 300:
+        if len(value) != EXPECTED_SAMPLE_COUNT:
             raise serializers.ValidationError(
-                f"IMU samples는 반드시 300개여야 합니다. 현재 {len(value)}개입니다."
+                f"IMU samples는 반드시 {EXPECTED_SAMPLE_COUNT}개여야 합니다. "
+                f"현재 {len(value)}개입니다."
             )
 
         for i, sample in enumerate(value):

@@ -16,9 +16,9 @@ class ImuData(models.Model):
     start_timestamp = models.DateTimeField()
     end_timestamp = models.DateTimeField()
 
-    # 50Hz, 6초
-    sample_rate = models.IntegerField(default=50)
-    window_sec = models.IntegerField(default=6)
+    # 25Hz * 12초 = 300 samples
+    sample_rate = models.IntegerField(default=25)
+    window_sec = models.IntegerField(default=12)
 
     # 300개 샘플 배열 저장
     samples = models.JSONField()
@@ -38,5 +38,6 @@ class ImuData(models.Model):
         return (
             f"protectee_id={self.protectee_id} | "
             f"window={self.window_index} | "
-            f"{self.start_timestamp} ~ {self.end_timestamp}"
+            f"{self.start_timestamp} ~ {self.end_timestamp} | "
+            f"{self.sample_rate}Hz, {self.window_sec}s"
         )
