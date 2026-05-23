@@ -114,8 +114,7 @@
       }
 
       // ppg prefix로 include 되어있다는 전제 (/ppg/...)
-      window.location.href = `/ppg/dashboard/device/${encodeURIComponent(deviceId)}/`;
-    });
+      window.location.href = `/apnea/device/${encodeURIComponent(deviceId)}/`;    });
 
     // 검색: 이름 기준으로 매칭된 카드 상단 정렬
     searchInput.addEventListener("input", () => {
