@@ -53,7 +53,6 @@ INSTALLED_APPS = [
     "ppg", #PPG 서버 통합용 
     "geo", #GEO 실시간 데이터 수신용
     "imu", # IMU 연동
-    "nppg", #PPG 새 모델 연동
     "apnea", #PPG 새 테이블 생성 
 
 ]

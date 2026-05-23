@@ -18,7 +18,6 @@ urlpatterns = [
     path("dbchat/", include("dbchat.urls")),
     path("report/", include("report.urls", namespace="report")),
     path("ppg/", include("ppg.urls")),
-    path("nppg/", include("nppg.urls")),
     path("apnea/", include("apnea.urls")),
 
     # =========================
