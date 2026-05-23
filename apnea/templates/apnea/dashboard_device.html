@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+{% load static %}
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Device Dashboard – {{ device_id }}</title>
+  <link rel="stylesheet" href="{% static 'apnea/css/dashboard.css' %}">
+  <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={{ KAKAO_JS_KEY }}&autoload=false"></script>
+  <style>
+    html, body { margin:0; padding:0; height:100%; overflow:hidden; }
+    #appRoot {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden;
+    }
+
+    /* 헤더 */
+    .header { flex: 0 0 auto; }
+
+    /* meta-bar */
+    .meta-bar {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin: 6px 20px 0;
+        flex: 0 0 auto;
+    }
+    .pill { background:#f3f4f6; padding:4px 10px; border-radius:999px; font-size:12px; }
+
+    /* KPI 바 */
+    .kpis { flex: 0 0 auto; padding: 6px 20px; margin-bottom: 0; }
+
+    /* 메인 그리드: 남은 공간 전부 차지 */
+    .grid-split {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr);
+        gap: 14px;
+        padding: 8px 20px 12px;
+        flex: 1;
+        min-height: 0;
+        align-items: stretch;
+    }
+    /* 왼쪽 */
+    .grid-left {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-height: 0;
+    }
+
+    /* 오른쪽 */
+    .grid-right {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        min-height: 0;
+    }
+
+    /* 오른쪽 카드 */
+    .grid-right .card {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        padding: 10px;
+    }
+    .chart-box {
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+    }
+
+    /* IMU 더 작게 */
+    .imu-section {
+    padding: 8px 14px;
+    flex: 0 0 auto;
+    }
+    .imu-title  { font-weight:700; font-size:12px; margin-bottom:4px; color:#374151; }
+    .imu-value  { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+    .imu-level  { font-size:18px; font-weight:800; letter-spacing:-0.5px; }
+    .imu-danger { font-size:12px; font-weight:600; }
+    .imu-ts     { font-size:11px; color:#6b7280; }
+
+    /* 하단: 지도 + 착용중 → flex:1로 남은 공간 전부 차지 */
+    .bottom-row {
+    display: flex;
+    gap: 12px;
+    flex: 1;          /* ← 남은 공간 전부 차지 */
+    min-height: 0;
+    }
+
+    /* 지도 */
+    .map-wrap {
+    flex: 1.4;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    }
+    .map-title { font-weight:700; font-size:13px; margin-bottom:8px; color:#374151; }
+    #map {
+    flex: 1;          /* ← 남은 공간 전부 차지 */
+    min-height: 0;
+    border-radius: 10px;
+    overflow: hidden;
+    }
+
+    /* 착용중 */
+    .wear-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    }
+    #wearCard {
+    flex: 1;          /* ← 남은 공간 전부 차지 */
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    box-sizing: border-box;
+    text-align: center;
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.08);
+    min-height: 0;
+    }
+    #wearCard .wear-card__top {
+    flex: 0 0 auto;
+    }
+    #wearCard .wear-card__bottom {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: 8px 0;
+    min-height: 0;
+    }
+    #wearCard .wear-card__bottom > img {
+    max-height: 100%;
+    max-width: 100%;
+    object-fit: contain;
+    }
+    .wear-card__title  { font-size:12px; color:#6b7280; font-weight:600; margin-bottom:4px; }
+    .wear-card__status { font-size:24px; font-weight:700; margin-bottom:4px; }
+    .wear-card__meta   { font-size:10px; color:#4b5563; }
+
+    #wearCard.is-wear .wear-card__status { color:#10b981; }
+    #wearCard.is-off  .wear-card__status { color:#ef4444; }
+    #wearCard.is-unk  .wear-card__status { color:#9ca3af; }
+
+    /* 오른쪽 그래프 높이 */
+    .chart-box { width:100%; height:280px; }
+  </style>
+</head>
+<body>
+<div id="wearOverlay" class="wear-overlay"></div>
+    <!-- </div> 닫기 태그 -->
+<div class="wear-popup wear-popup--hidden" id="wearPopup">
+  <button class="wear-popup__close" id="wearPopupClose">✕</button>
+  <div class="wear-popup__inner">
+    <div class="wear-popup__row">
+      <span class="wear-popup__label">Baseline collection</span>
+      <span class="wear-popup__status" id="popupStatus">Running...</span>
+    </div>
+    <div class="wear-popup__text" id="popupText">Collecting 96s baseline data</div>
+    <div class="wear-popup__progress">
+      <div class="wear-popup__bar" id="popupBar" style="width:0%"></div>
+    </div>
+    <div class="wear-popup__counter" id="popupCounter">0 / 96s</div>
+  </div>
+</div>
+
+<div id="appRoot">
+  <header class="header">
+    <h1>Integrated Threat Monitor</h1>
+    <img class="logo" src="{% static 'apnea/image/logo.png' %}" alt="logo">
+  </header>
+
+  <div class="meta-bar">
+    <div class="pill"><b>User</b>: {{ protectee_name }}</div>
+    <div class="pill"><b>Device</b>: {{ device_id }}</div>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi">
+      <span class="kpi-label">Baseline</span>
+      <span class="kpi-value" id="kpiBaseline">-</span>
+    </div>
+    <div class="kpi-right">
+      <button id="btnStartNew">측정 시작</button>
+    </div>
+  </div>
+
+  <div class="grid-split">
+
+    <!-- 왼쪽 -->
+    <div class="grid-left">
+
+      <!-- IMU (상단, 작게) -->
+      <div class="card imu-section">
+        <div class="imu-title">IMU 상태 (최근 3분)</div>
+        <div class="imu-value">
+          <div id="imuLevelText"   class="imu-level">-</div>
+          <div id="imuDangerLevel" class="imu-danger"></div>
+          <div id="imuTs"          class="imu-ts"></div>
+        </div>
+      </div>
+
+      <!-- 하단: 지도 + 착용중 나란히 -->
+      <div class="bottom-row">
+
+        <!-- 지도 -->
+        <div class="card map-wrap" style="padding:14px;">
+          <div class="map-title">현재 위치</div>
+          <div id="map"></div>
+        </div>
+
+        <!-- 착용중 -->
+        <div class="wear-wrap">
+          <div id="wearCard" class="card wear-card">
+            <div class="wear-card__top">
+              <div class="wear-card__title">탈부착 여부</div>
+              <div class="wear-card__status" id="wearStatusText">--</div>
+              <div class="wear-card__meta"   id="wearStatusMeta"></div>
+            </div>
+            <div class="wear-card__bottom">
+              <img id="wearStateImage"
+                   src="{% static 'apnea/image/loading.png' %}"
+                   alt="wear state">
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /bottom-row -->
+
+    </div><!-- /grid-left -->
+
+    <!-- 오른쪽: 그래프 2개 -->
+    <div class="grid-right">
+      <div class="card">
+        <div id="irHoldingChart" class="chart-box"></div>
+        <p id="irHoldingMeta" class="decision"></p>
+      </div>
+      <div class="card">
+        <div id="ppgRratio" class="chart-box"></div>
+      </div>
+    </div>
+
+  </div><!-- /grid-split -->
+
+</div>
+
+{{ items|json_script:"items-json" }}
+<script>
+  window.ITEMS          = JSON.parse(document.getElementById('items-json').textContent || '[]');
+  window.DASH_DEVICE_ID = "{{ device_id|escapejs }}";
+</script>
+<script type="module" src="{% static 'apnea/js/main_device.js' %}"></script>
+</body>
+</html>

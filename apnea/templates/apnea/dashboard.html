@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+{% load static %}
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apnea Detection Dashboard</title>
+  <link rel="stylesheet" href="{% static 'apnea/css/dashboard.css' %}">
+  <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
+</head>
+<body>
+<div id="wearOverlay" class="wear-overlay"></div>
+
+<div id="appRoot">
+
+  <header class="header">
+    <h1>Apnea Detection Monitor</h1>
+    <img src="{% static 'apnea/image/logo.png' %}" alt="logo" class="logo">
+  </header>
+
+  <div class="kpis">
+    <div class="kpi">
+      <span class="kpi-label">Last Device</span>
+      <span class="kpi-value" id="kpiDevice">-</span>
+    </div>
+    <div class="kpi-right">
+      <div class="kpi" style="min-width:300px;">
+        <span class="kpi-label">Baseline</span>
+        <span class="kpi-value" id="kpiBaseline">-</span>
+      </div>
+      <button id="btnStartNew">측정 시작</button>
+    </div>
+  </div>
+
+  <div class="grid-split">
+
+    <div class="grid-left">
+      <div id="wearCard" class="card wear-card">
+        <div class="wear-card__top">
+          <div class="wear-card__title">탈부착 여부</div>
+          <div class="wear-card__status" id="wearStatusText">--</div>
+          <div class="wear-card__meta" id="wearStatusMeta"></div>
+        </div>
+        <div class="wear-card__bottom">
+          <img id="wearStateImage"
+               src="{% static 'apnea/image/loading.png' %}"
+               alt="wear state">
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-right">
+      <div class="card" style="margin-bottom:16px;">
+        <div id="irHoldingChart" class="chart-box"></div>
+        <p id="irHoldingMeta" class="decision"></p>
+      </div>
+      <div class="card">
+        <div id="ppgRratio" class="chart-box"></div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<div class="wear-popup wear-popup--hidden" id="wearPopup">
+  <button class="wear-popup__close" id="wearPopupClose">✕</button>
+  <div class="wear-popup__inner">
+    <div class="wear-popup__row">
+      <span class="wear-popup__label">Baseline collection</span>
+      <span class="wear-popup__status" id="popupStatus">Running...</span>
+    </div>
+    <div class="wear-popup__text" id="popupText">Collecting 96s baseline data</div>
+    <div class="wear-popup__progress">
+      <div class="wear-popup__bar" id="popupBar" style="width:0%"></div>
+    </div>
+    <div class="wear-popup__counter" id="popupCounter">0 / 96s</div>
+  </div>
+</div>
+
+<script type="module" src="{% static 'apnea/js/main.js' %}"></script>
+</body>
+</html>
