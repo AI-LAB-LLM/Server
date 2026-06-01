@@ -22,6 +22,7 @@ class ApneaChunk(models.Model):
         related_name='chunks', null=True, blank=True
     )
     device_id      = models.CharField(max_length=64, db_index=True)
+    received_at    = models.DateTimeField(null=True, blank=True)  
     timestamp      = models.DateTimeField(db_index=True)
     chunk_index    = models.IntegerField(default=0)
 

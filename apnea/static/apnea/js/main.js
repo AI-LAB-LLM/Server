@@ -2,9 +2,10 @@
 // 기존 ppg 앱의 main.js와 동일한 구조.
 // Baseline 진행률 UI가 추가됨.
 
-import { setItems, appendRFromItems, appendIrFromItems } from './state.js';
+import { setItems, appendRFromItems, appendIrFromItems,resetIrbuf } from './state.js';
 import { fetchRecordsWithPulses, startBaselineSession } from './api.js';
 import { renderRratio, renderIrHolding, renderWearStatus } from './charts.js';
+
 
 let isFetching = false;
 const POLL_MS = 4000;
@@ -128,11 +129,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // "측정 시작" 버튼
   const btn = document.getElementById('btnStartNew');
   btn?.addEventListener('click', async () => {
-    const deviceId = window.__lastDeviceId || '_default_';
+    const deviceId = DEVICE_ID || window.__lastDeviceId || '_default_';
     try {
-      const result = await startBaselineSession(deviceId, Date.now());
-      console.log('[baseline] started:', result);
+      await startBaselineSession(deviceId, Date.now());
       window.__sessionStartTime = new Date();
+      resetIrbuf();        // ← IRBUF 리셋
       openBaselinePopup(96);
     } catch (e) {
       console.warn('[baseline] start failed', e);

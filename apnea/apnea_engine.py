@@ -18,6 +18,7 @@ FS               = 25.0
 SHORT_GAP_THRESH = 3
 BEAT_FEATURES    = ["FO_SP_s", "Downstroke_vel", "HR_bpm", "RR_s", "QI"]
 BASELINE_PACKETS = 8
+MIN_BASELINE_SAMPLES = int(FS * 90)
 
 
 def butter_bandpass(low, high, fs, order=3):
@@ -313,7 +314,7 @@ class RealtimeHysteresis:
 
 
 class RealtimeBeatExtractor:
-    def __init__(self, fs=FS, rolling_seconds=10.0, safe_margin_seconds=0.6):
+    def __init__(self, fs=FS, rolling_seconds=13.0, safe_margin_seconds=0.6):
         self.fs            = fs
         self.rolling_n     = int(rolling_seconds * fs)
         self.safe_margin_n = int(safe_margin_seconds * fs)
@@ -553,7 +554,7 @@ class ApneaEngine:
             self._baseline_active[device_id] = True   # ← 버튼 눌렀을 때만 True
             self._packet_count[device_id]    = 0
             self._extractors[device_id]      = RealtimeBeatExtractor(
-                fs=FS, rolling_seconds=10.0, safe_margin_seconds=0.6
+                fs=FS, rolling_seconds=13.0, safe_margin_seconds=0.6
             )
             self._detectors.pop(device_id, None)
         logger.info(f"[ApneaEngine] session started: {device_id}")
@@ -567,7 +568,7 @@ class ApneaEngine:
                 self._baseline_active[device_id] = False  # ← 버튼 누르기 전
                 self._packet_count[device_id]    = 0
                 self._extractors[device_id]      = RealtimeBeatExtractor(
-                    fs=FS, rolling_seconds=10.0, safe_margin_seconds=0.6
+                    fs=FS, rolling_seconds=13.0, safe_margin_seconds=0.6
                 )
 
     def _finalize_baseline(self, device_id: str, session_db):
@@ -594,8 +595,14 @@ class ApneaEngine:
             device               = device_str,
         )
 
+        last_beats = ref_seq[-10:] if len(ref_seq) >= 10 else ref_seq
+        for feat_vec in last_beats:
+            norm_vec = normalize_feature_vector(feat_vec.astype(np.float32), ref_mu, ref_sd)
+            detector.beat_window.append(norm_vec)
+
+
         old     = self._extractors.get(device_id)
-        new_ext = RealtimeBeatExtractor(fs=FS, rolling_seconds=10.0, safe_margin_seconds=0.6)
+        new_ext = RealtimeBeatExtractor(fs=FS, rolling_seconds=13.0, safe_margin_seconds=0.6)
         if old is not None:
             new_ext.raw_buffer                = deque(old.raw_buffer, maxlen=old.rolling_n)
             new_ext.global_sample_idx         = old.global_sample_idx
@@ -627,8 +634,8 @@ class ApneaEngine:
         logger.info(f"[ApneaEngine] baseline done: {device_id} beats={len(ref_seq)}")
 
     def process_chunk(self, device_id: str, ppg_green: list,
-                  ppg_ir: list = None, ppg_red: list = None,
-                  session_db=None) -> dict:
+                    ppg_ir: list = None, ppg_red: list = None,
+                    session_db=None, packet_timestamp=None) -> dict:
 
         # ★ lock 밖에서 먼저 device 초기화
         self._ensure_device(device_id)
@@ -650,8 +657,7 @@ class ApneaEngine:
         result = {
             "packet_index":      packet_idx,
             "baseline_ready":    baseline_done,
-            "baseline_progress": min(1.0, packet_idx / BASELINE_PACKETS),
-            "wear":              wear,
+            "baseline_progress": min(1.0, len(self._baseline_buf.get(device_id, [])) / MIN_BASELINE_SAMPLES),            "wear":              wear,
             "r_ratio_series":    r_ratio,
             "beat_results":      [],
             "p_apnea":           None,
@@ -665,17 +671,25 @@ class ApneaEngine:
             baseline_active = self._baseline_active.get(device_id, False)
 
             if not baseline_active:
-                # 버튼 안 눌렸으면 baseline 수집 안 함
-                # wear, r_ratio만 반환
                 result["pred_status"] = "waiting_for_session"
                 return result
 
-            # 버튼 눌렸으면 기존 baseline 수집 로직
-            with self._dev_lock:
-                self._baseline_buf[device_id].extend(arr.tolist())
-            if extractor is not None:
-                extractor.feed_packet(arr)
-            if packet_idx >= BASELINE_PACKETS:
+            # ★ 패킷 측정 완료 시간이 세션 시작 이전이면 제외
+            include_in_baseline = True
+            if packet_timestamp and session_db and session_db.started_at:
+                from datetime import timedelta
+                watch_end_time = packet_timestamp + timedelta(seconds=12)
+                if watch_end_time <= session_db.started_at:
+                    include_in_baseline = False
+                    logger.info(f"[baseline] skip packet before session: watch_end={watch_end_time}, started_at={session_db.started_at}")
+
+            if include_in_baseline:
+                with self._dev_lock:
+                    self._baseline_buf[device_id].extend(arr.tolist())
+                if extractor is not None:
+                    extractor.feed_packet(arr)
+
+            if len(self._baseline_buf[device_id]) >= MIN_BASELINE_SAMPLES:
                 self._finalize_baseline(device_id, session_db)
                 with self._dev_lock:
                     baseline_done = self._baseline_done[device_id]

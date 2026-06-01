@@ -8,6 +8,8 @@ from .serializers import (
     GeoDataIngestSerializer,
     GeoDataIngestResponseSerializer,
 )
+from monitoring.serializers import GEOAlertSerializer
+from .gpr_services import create_geo_processed_data_and_run_gpr
 
 
 class GeoDataIngestView(APIView):
@@ -20,18 +22,14 @@ class GeoDataIngestView(APIView):
         responses={201: GeoDataIngestResponseSerializer},
         summary="GEO 위치 데이터 수신",
         description=(
-            "위치 데이터를 배열 형태로 수신합니다.\n\n"
-            "필드 설명:\n"
-            "- device_id (string): 워치 고유 ID\n"
-            "- locations (array): 위치 데이터 배열\n\n"
-            "locations 내부 필드:\n"
-            "- timestamp (long, UNIX ms)\n"
-            "- pos_success (boolean): 위치 수신 성공 여부\n"
-            "- pos_info (object, optional): pos_success=true일 때만 포함\n\n"
-            "pos_info 내부 필드:\n"
-            "- longitude (double): 경도\n"
-            "- latitude (double): 위도\n"
-            "- accuracy_h (double): 정확도\n\n"
+            "실시간 위치 정보를 수신하는 API입니다.\n\n"
+            "기존에는 monitoring_event 테이블에 latitude, longitude를 저장했지만, "
+            "이제는 geo_processed_data 테이블에 저장합니다.\n\n"
+            "- raw_latitude/raw_longitude: 원본 GPS\n"
+            "- latitude/longitude: GPRRuntime 처리 후 지도 표시용 최종 좌표\n"
+            "- 최초 저장 시 latitude/longitude는 null로 생성됩니다.\n"
+            "- 이후 GPRRuntime 처리 결과에 따라 latitude/longitude가 업데이트됩니다.\n"
+            "- 정상 GPS로 판단되면 최종 좌표가 raw 좌표와 동일할 수 있습니다."
         ),
         examples=[
             OpenApiExample(
@@ -102,3 +100,59 @@ class GeoDataIngestView(APIView):
         }
 
         return Response(response_data, status=status.HTTP_201_CREATED)
+    
+
+
+# GEO Alert API - 기존 monitoring_event 저장 대신 geo_processed_data 저장
+@extend_schema(
+    request=GEOAlertSerializer,
+    responses={201: None},
+    summary="GEO 위치 이벤트 수신, GPR 보정 및 경로 이상탐지",
+)
+class GEOAlertView(APIView):
+    """
+    POST /api/v1/events/geo-alert
+    """
+
+    def post(self, request):
+        serializer = GEOAlertSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        device_id = data["device_id"]
+
+        protectee, created = Protectee.objects.get_or_create(
+            device_id=device_id,
+            defaults={"name": f"unknown-{device_id[:6]}"},
+        )
+
+        latitude = data.get("latitude")
+        longitude = data.get("longitude")
+
+        geo_row, gpr_result, anomaly_result = create_geo_processed_data_and_run_gpr(
+            protectee=protectee,
+            device_id=device_id,
+            timestamp=data["timestamp"],
+            latitude=latitude,
+            longitude=longitude,
+        )
+
+        return Response(
+            {
+                "status": "ok",
+                "geo_processed_id": geo_row.id,
+                "protectee_id": protectee.id,
+                "protectee_created": created,
+                "device_id": geo_row.device_id,
+                "timestamp": geo_row.timestamp,
+                "raw_latitude": geo_row.raw_latitude,
+                "raw_longitude": geo_row.raw_longitude,
+                "latitude": geo_row.latitude,
+                "longitude": geo_row.longitude,
+                "pos_success": geo_row.pos_success,
+                "gpr": gpr_result,
+                "anomaly": anomaly_result,
+                "map_notice": "지도에는 latitude / longitude를 사용하세요.",
+            },
+            status=status.HTTP_201_CREATED,
+        )

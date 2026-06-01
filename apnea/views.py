@@ -38,6 +38,8 @@ def _get_or_create_session(device_id: str) -> ApneaSession:
 @method_decorator(csrf_exempt, name='dispatch')
 class IngestView(View):
     def post(self, request):
+        received_at = datetime.now(timezone.utc)  # ← 추가
+
         try:
             body = json.loads(request.body)
         except Exception:
@@ -67,7 +69,8 @@ class IngestView(View):
         result  = engine.process_chunk(
             device_id, ppg_green,
             ppg_ir=ppg_ir, ppg_red=ppg_red,
-            session_db=session
+            session_db=session,
+            packet_timestamp=timestamp, 
         )
 
         wear = result.get("wear", {})
@@ -90,7 +93,14 @@ class IngestView(View):
             p_apnea_smooth = result.get("p_apnea_smooth"),
             pred_label     = result.get("pred_label"),
             pred_status    = result.get("pred_status"),
+            received_at    = received_at,
         )
+        try:
+            watch_end_time = timestamp + __import__('datetime').timedelta(seconds=12)
+            network_delay = (received_at - watch_end_time).total_seconds()
+            print(f"[딜레이] received_at={received_at.isoformat()}, watch_end={watch_end_time.isoformat()}, 전송지연={network_delay:.2f}s", flush=True)
+        except Exception:
+                    pass
 
         return JsonResponse({
             "ok":                True,
@@ -103,6 +113,7 @@ class IngestView(View):
             "p_apnea_smooth":    result.get("p_apnea_smooth"),
             "pred_label":        result.get("pred_label"),
             "pred_status":       result.get("pred_status"),
+            
         })
 
 
@@ -178,6 +189,7 @@ class RecordsView(View):
                 "is_baseline":  c.is_baseline,
                 "beat_results": c.beat_results or [],
                 "predictions":  predictions,
+                "received_at":  c.received_at.isoformat() if c.received_at else None,
             })
 
         return JsonResponse({"ok": True, "items": items, "total": len(items)})
@@ -247,6 +259,7 @@ class DeviceDashboardView(View):
                 "is_baseline":  c.is_baseline,
                 "beat_results": c.beat_results or [],
                 "predictions":  predictions,
+                "received_at":  c.received_at.isoformat() if c.received_at else None,
             })
 
         kakao_key = getattr(settings, "KAKAO_JS_KEY", "")

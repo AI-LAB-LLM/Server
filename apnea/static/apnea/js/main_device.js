@@ -1,4 +1,4 @@
-import { setItems, appendRFromItems, appendIrFromItems } from './state.js';
+import { setItems, appendRFromItems, appendIrFromItems, resetIrbuf } from './state.js';
 import { fetchRecordsWithPulses, startBaselineSession, fetchModelStatus } from './api.js';
 import { renderRratio, renderIrHolding, renderWearStatus } from './charts.js';
 
@@ -135,6 +135,7 @@ async function fetchAndRender() {
     renderIrHolding();
     renderWearStatus();
     updateKpi(items);
+    updateDelay(items);
 
     if (DEVICE_ID) {
       const res = await fetch(
@@ -166,15 +167,16 @@ async function fetchAndRender() {
 
   const btn = document.getElementById('btnStartNew');
   btn?.addEventListener('click', async () => {
-    const deviceId = DEVICE_ID || '_default_';
-    try {
-      await startBaselineSession(deviceId, Date.now());
-      window.__sessionStartTime = new Date();
-      openBaselinePopup(96);
-    } catch (e) {
-      console.warn('[baseline] start failed', e);
-    }
-  });
+  const deviceId = DEVICE_ID || window.__lastDeviceId || '_default_';
+  try {
+    await startBaselineSession(deviceId, Date.now());
+    window.__sessionStartTime = new Date();
+    resetIrbuf();        // ← IRBUF 리셋
+    openBaselinePopup(96);
+  } catch (e) {
+    console.warn('[baseline] start failed', e);
+  }
+});
 
   const INIT = Array.isArray(window.ITEMS) ? window.ITEMS : [];
   setItems(INIT);
@@ -184,6 +186,7 @@ async function fetchAndRender() {
   renderIrHolding();
   renderWearStatus();
   updateKpi(INIT);
+  updateDelay(INIT);
 
   if (!window.__devicePollStarted) {
     window.__devicePollStarted = true;
@@ -191,3 +194,24 @@ async function fetchAndRender() {
     fetchAndRender();
   }
 })();
+
+function updateDelay(items) {
+  const delayEl = document.getElementById('delayText');
+  if (!delayEl || !items.length) return;
+
+  const last = items[items.length - 1];
+  const watchTs    = last?.timestamp;
+  const receivedTs = last?.received_at;
+
+  if (!watchTs || !receivedTs) {
+    delayEl.textContent = '-';
+    return;
+  }
+
+  const watchEndMs   = new Date(watchTs).getTime() + 12000;
+  const receivedMs   = new Date(receivedTs).getTime();
+  const diff         = (receivedMs - watchEndMs) / 1000;
+
+  delayEl.textContent = `전송 딜레이: ${diff.toFixed(1)}초`;
+  delayEl.style.color = diff > 10 ? '#ef4444' : diff > 5 ? '#f97316' : '#10b981';
+}
