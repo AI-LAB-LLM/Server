@@ -119,6 +119,7 @@ export function appendIrFromItems(items) {
           ts: r?.timestamp ?? null,
           thr: null,
           label,
+          wear_valid: r?.predictions?.WEAR_GREEN?.valid,
         });
       }
     }

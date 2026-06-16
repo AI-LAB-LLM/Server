@@ -55,9 +55,11 @@ def adaptive_prominence(y, base_prom=0.03):
 
 def detect_sp(ppg_norm, fs, min_rr_sec=0.45, base_prom=0.03):
     prom     = adaptive_prominence(ppg_norm, base_prom)
-    peaks, _ = find_peaks(ppg_norm,
-                           distance=max(1, int(min_rr_sec * fs)),
-                           prominence=prom)
+    peaks, _ = find_peaks(
+        ppg_norm,
+        distance=max(1, int(min_rr_sec * fs)),
+        prominence=prom
+    )
     return peaks.astype(int)
 
 
@@ -101,9 +103,12 @@ def find_notch_after_peak(ppg_norm, i_peak, fs, search_lo=0.06, search_hi=0.40):
 
 def _check_fiducial_order(fid):
     order  = ["FO", "SP", "DN", "DP"]
-    points = [(n, v) for n, v in [("FO", fid.FO), ("SP", fid.SP),
-                                    ("DN", fid.DN), ("DP", fid.DP)] if v is not None]
-    prev   = -1
+    points = [
+        (n, v)
+        for n, v in [("FO", fid.FO), ("SP", fid.SP), ("DN", fid.DN), ("DP", fid.DP)]
+        if v is not None
+    ]
+    prev = -1
     for name, _ in sorted(points, key=lambda x: x[1]):
         curr = order.index(name)
         if curr <= prev:
@@ -159,7 +164,7 @@ def impute_column_short(col, thresh=SHORT_GAP_THRESH):
             gap = j - i
             if gap <= thresh:
                 vl = col[i - 1] if i > 0 and np.isfinite(col[i - 1]) else 0.0
-                vr = col[j]     if j < n and np.isfinite(col[j])     else 0.0
+                vr = col[j] if j < n and np.isfinite(col[j]) else 0.0
                 for k in range(gap):
                     col[i + k] = vl + (vr - vl) * (k + 1) / (gap + 1)
             i = j
@@ -170,6 +175,7 @@ def impute_column_short(col, thresh=SHORT_GAP_THRESH):
 
 def process_raw_to_beat_table_offline(raw, fs=FS):
     import pandas as pd
+
     raw = np.asarray(raw, dtype=float)
     raw = raw[np.isfinite(raw)]
     if len(raw) < int(fs * 5):
@@ -178,13 +184,15 @@ def process_raw_to_beat_table_offline(raw, fs=FS):
     ppg      = bandpass_filter(raw, fs=fs, low=0.5, high=8.0)
     ppg_norm = robust_minmax(ppg)
     diff     = np.gradient(ppg_norm) * fs
-    sp_idx   = detect_sp(ppg_norm, fs, min_rr_sec=0.45, base_prom=0.03)
-    sp_idx   = refine_sp_indices(ppg_norm, sp_idx, fs, window_sec=0.08)
+
+    sp_idx = detect_sp(ppg_norm, fs, min_rr_sec=0.45, base_prom=0.03)
+    sp_idx = refine_sp_indices(ppg_norm, sp_idx, fs, window_sec=0.08)
 
     if len(sp_idx) < 5:
         return pd.DataFrame()
 
     rows, prev_sp = [], None
+
     for i, sp in enumerate(sp_idx):
         fo  = find_onset_before_peak(ppg_norm, diff, sp, fs)
         dn  = find_notch_after_peak(ppg_norm, sp, fs)
@@ -194,20 +202,43 @@ def process_raw_to_beat_table_offline(raw, fs=FS):
             return max(0.0, (b - a) / fs) if (a is not None and b is not None) else np.nan
 
         fo_sp_s = tdiff(fid.FO, fid.SP)
-        amp_sp  = (float(ppg_norm[fid.SP] - ppg_norm[fid.FO])
-                   if (fid.FO is not None and fid.SP is not None) else np.nan)
-        dn_v    = (float(np.nanmin(diff[fid.SP: fid.DN + 1]))
-                   if (fid.SP is not None and fid.DN is not None and fid.DN > fid.SP)
-                   else np.nan)
-        qi      = quality_index(fid, {"FO_SP_time_s": fo_sp_s, "Amp_SP": amp_sp,
-                                       "Downstroke_vel": dn_v}, ppg_norm, fs)
-        rr_s    = np.nan if prev_sp is None else (fid.SP - prev_sp) / fs
-        hr_bpm  = 60.0 / rr_s if (np.isfinite(rr_s) and rr_s > 0) else np.nan
+
+        amp_sp = (
+            float(ppg_norm[fid.SP] - ppg_norm[fid.FO])
+            if (fid.FO is not None and fid.SP is not None)
+            else np.nan
+        )
+
+        dn_v = (
+            float(np.nanmin(diff[fid.SP: fid.DN + 1]))
+            if (fid.SP is not None and fid.DN is not None and fid.DN > fid.SP)
+            else np.nan
+        )
+
+        qi = quality_index(
+            fid,
+            {
+                "FO_SP_time_s": fo_sp_s,
+                "Amp_SP": amp_sp,
+                "Downstroke_vel": dn_v,
+            },
+            ppg_norm,
+            fs,
+        )
+
+        rr_s = np.nan if prev_sp is None else (fid.SP - prev_sp) / fs
+        hr_bpm = 60.0 / rr_s if (np.isfinite(rr_s) and rr_s > 0) else np.nan
         prev_sp = fid.SP
 
-        rows.append({"FO_SP_s": fo_sp_s, "Downstroke_vel": dn_v,
-                     "HR_bpm": hr_bpm, "RR_s": rr_s, "QI": qi,
-                     "sp_sample": int(fid.SP), "beat_idx": i})
+        rows.append({
+            "FO_SP_s": fo_sp_s,
+            "Downstroke_vel": dn_v,
+            "HR_bpm": hr_bpm,
+            "RR_s": rr_s,
+            "QI": qi,
+            "sp_sample": int(fid.SP),
+            "beat_idx": i,
+        })
 
     return pd.DataFrame(rows)
 
@@ -215,9 +246,11 @@ def process_raw_to_beat_table_offline(raw, fs=FS):
 def beat_table_to_seq_for_ref(beat_df):
     if beat_df.empty or len(beat_df) < 5:
         return np.empty((0, len(BEAT_FEATURES)), dtype=np.float32)
+
     df = beat_df.copy()
     for col in BEAT_FEATURES:
         df[col] = impute_column_short(df[col].to_numpy(float))
+
     return df[BEAT_FEATURES].to_numpy(dtype=np.float32)
 
 
@@ -238,39 +271,51 @@ class CausalFeatureImputer:
         self.feature_cols = feature_cols
         self.max_gap      = max_gap
         self.last_valid   = {c: np.nan for c in feature_cols}
-        self.gap_count    = {c: 0      for c in feature_cols}
+        self.gap_count    = {c: 0 for c in feature_cols}
 
     def transform_one(self, feat):
         out = dict(feat)
+
         for c in self.feature_cols:
             v = out.get(c, np.nan)
+
             if np.isfinite(v):
                 self.last_valid[c] = float(v)
                 self.gap_count[c]  = 0
             else:
                 self.gap_count[c] += 1
+
                 if np.isfinite(self.last_valid[c]) and self.gap_count[c] <= self.max_gap:
                     out[c] = self.last_valid[c]
                 else:
                     out[c] = np.nan
+
         return out
 
 
 class CausalTransformerBinary(nn.Module):
     def __init__(self, input_dim, d_model, nhead, num_layers, dropout, context_len):
         super().__init__()
+
         self.input_proj = nn.Linear(input_dim, d_model)
         self.pos_emb    = nn.Embedding(context_len, d_model)
+
         layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead,
+            d_model=d_model,
+            nhead=nhead,
             dim_feedforward=d_model * 4,
-            dropout=dropout, batch_first=True,
+            dropout=dropout,
+            batch_first=True,
         )
+
         self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
+
         causal = torch.triu(
-            torch.full((context_len, context_len), float("-inf")), diagonal=1
+            torch.full((context_len, context_len), float("-inf")),
+            diagonal=1,
         )
         self.register_buffer("causal_mask", causal)
+
         self.head = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.ReLU(),
@@ -297,28 +342,45 @@ class RealtimeSmoother:
 class RealtimeHysteresis:
     def __init__(self, hi, lo, min_run):
         self.hi, self.lo, self.min_run = float(hi), float(lo), int(min_run)
-        self.state = self.hi_count = self.lo_count = 0
+        self.state = 0
+        self.hi_count = 0
+        self.lo_count = 0
 
     def update(self, p_smooth):
         if self.state == 0:
             self.hi_count = self.hi_count + 1 if p_smooth >= self.hi else 0
             if self.hi_count >= self.min_run:
                 self.state = 1
-                self.hi_count = self.lo_count = 0
+                self.hi_count = 0
+                self.lo_count = 0
         else:
             self.lo_count = self.lo_count + 1 if p_smooth <= self.lo else 0
             if self.lo_count >= self.min_run:
                 self.state = 0
-                self.hi_count = self.lo_count = 0
+                self.hi_count = 0
+                self.lo_count = 0
+
         return int(self.state)
 
 
 class RealtimeBeatExtractor:
-    def __init__(self, fs=FS, rolling_seconds=13.0, safe_margin_seconds=0.6):
+    def __init__(
+        self,
+        fs=FS,
+        rolling_seconds=20.0,
+        safe_margin_seconds=1.0,
+        min_rr_sec=0.45,
+        max_rr_sec=1.5,
+    ):
         self.fs            = fs
         self.rolling_n     = int(rolling_seconds * fs)
         self.safe_margin_n = int(safe_margin_seconds * fs)
-        self.raw_buffer    = deque(maxlen=self.rolling_n)
+
+        self.min_rr_sec = float(min_rr_sec)
+        self.max_rr_sec = float(max_rr_sec)
+
+        self.raw_buffer = deque(maxlen=self.rolling_n)
+
         self.global_sample_idx        = -1
         self.buffer_start_global_idx  = 0
         self.last_processed_sp_global = None
@@ -328,7 +390,7 @@ class RealtimeBeatExtractor:
     def feed_packet(self, values):
         """
         샘플을 buffer에 추가한 뒤
-        패킷 전체를 한 번에 처리 (기존: 샘플마다 처리 → 매우 느림)
+        패킷 전체를 한 번에 처리
         """
         for v in values:
             self.global_sample_idx += 1
@@ -337,36 +399,65 @@ class RealtimeBeatExtractor:
         self.buffer_start_global_idx = (
             self.global_sample_idx - len(self.raw_buffer) + 1
         )
-        # 패킷 전체 추가 후 1번만 beat 추출
+
         return self._extract_new_beats()
 
     def _extract_new_beats(self):
         if len(self.raw_buffer) < int(self.fs * 5):
             return []
+
         raw = np.asarray(self.raw_buffer, dtype=float)
         raw = raw[np.isfinite(raw)]
+
         if len(raw) < int(self.fs * 5):
             return []
 
         ppg      = bandpass_filter(raw, fs=self.fs, low=0.5, high=8.0)
         ppg_norm = robust_minmax(ppg)
         diff     = np.gradient(ppg_norm) * self.fs
+
         sp_local = detect_sp(ppg_norm, self.fs, min_rr_sec=0.45, base_prom=0.03)
         sp_local = refine_sp_indices(ppg_norm, sp_local, self.fs, window_sec=0.08)
 
         if len(sp_local) == 0:
             return []
 
-        new_rows       = []
+        new_rows = []
         latest_allowed = len(raw) - 1 - self.safe_margin_n
 
         for sp in sp_local:
             if sp > latest_allowed:
                 continue
+
             sp_global = self.buffer_start_global_idx + int(sp)
-            if (self.last_processed_sp_global is not None
-                    and sp_global <= self.last_processed_sp_global):
+
+            if (
+                self.last_processed_sp_global is not None
+                and sp_global <= self.last_processed_sp_global
+            ):
                 continue
+
+            rr_s = (
+                np.nan
+                if self.prev_sp_global is None
+                else (sp_global - self.prev_sp_global) / self.fs
+            )
+
+            # ✅ RR sanity check
+            # 너무 가까운 가짜 peak 또는 너무 먼 이상 peak는 beat로 사용하지 않음
+            if self.prev_sp_global is not None:
+
+                # 비정상 값
+                if not np.isfinite(rr_s):
+                    rr_s = np.nan
+
+                # 너무 짧은 RR → 가짜 peak 가능성 높음 → beat 버림
+                elif rr_s < self.min_rr_sec:
+                    continue
+
+                # 너무 긴 RR → beat는 살리고 RR/HR만 무효 처리
+                elif rr_s > self.max_rr_sec:
+                    rr_s = np.nan
 
             fo  = find_onset_before_peak(ppg_norm, diff, int(sp), self.fs)
             dn  = find_notch_after_peak(ppg_norm, int(sp), self.fs)
@@ -376,69 +467,132 @@ class RealtimeBeatExtractor:
                 return max(0.0, (b - a) / self.fs) if (a is not None and b is not None) else np.nan
 
             fo_sp_s = tdiff(fid.FO, fid.SP)
-            amp_sp  = (float(ppg_norm[fid.SP] - ppg_norm[fid.FO])
-                       if (fid.FO is not None and fid.SP is not None) else np.nan)
-            dn_v    = (float(np.nanmin(diff[fid.SP: fid.DN + 1]))
-                       if (fid.SP is not None and fid.DN is not None and fid.DN > fid.SP)
-                       else np.nan)
-            qi      = quality_index(fid, {"FO_SP_time_s": fo_sp_s, "Amp_SP": amp_sp,
-                                           "Downstroke_vel": dn_v}, ppg_norm, self.fs)
-            rr_s    = (np.nan if self.prev_sp_global is None
-                       else (sp_global - self.prev_sp_global) / self.fs)
-            hr_bpm  = 60.0 / rr_s if (np.isfinite(rr_s) and rr_s > 0) else np.nan
+
+            amp_sp = (
+                float(ppg_norm[fid.SP] - ppg_norm[fid.FO])
+                if (fid.FO is not None and fid.SP is not None)
+                else np.nan
+            )
+
+            dn_v = (
+                float(np.nanmin(diff[fid.SP: fid.DN + 1]))
+                if (fid.SP is not None and fid.DN is not None and fid.DN > fid.SP)
+                else np.nan
+            )
+
+            qi = quality_index(
+                fid,
+                {
+                    "FO_SP_time_s": fo_sp_s,
+                    "Amp_SP": amp_sp,
+                    "Downstroke_vel": dn_v,
+                },
+                ppg_norm,
+                self.fs,
+            )
+
+            hr_bpm = 60.0 / rr_s if (np.isfinite(rr_s) and rr_s > 0) else np.nan
 
             new_rows.append({
-                "FO_SP_s": fo_sp_s, "Downstroke_vel": dn_v,
-                "HR_bpm": hr_bpm,   "RR_s": rr_s, "QI": qi,
-                "sp_sample": int(sp_global), "beat_idx": self.beat_idx,
+                "FO_SP_s": fo_sp_s,
+                "Downstroke_vel": dn_v,
+                "HR_bpm": hr_bpm,
+                "RR_s": rr_s,
+                "QI": qi,
+                "sp_sample": int(sp_global),
+                "beat_idx": self.beat_idx,
             })
-            self.beat_idx               += 1
-            self.prev_sp_global          = sp_global
+
+            self.beat_idx += 1
+            self.prev_sp_global = sp_global
             self.last_processed_sp_global = sp_global
 
         return new_rows
 
 
 class RealtimeApneaDetector:
-    def __init__(self, model, context_len, ref_mu, ref_sd,
-                 threshold_from_train, hi=None, lo=None,
-                 smooth_win=5, min_run=3, device="cpu"):
-        self.model                = model.to(device)
+    def __init__(
+        self,
+        model,
+        context_len,
+        ref_mu,
+        ref_sd,
+        threshold_from_train,
+        hi=None,
+        lo=None,
+        smooth_win=5,
+        min_run=3,
+        device="cpu",
+    ):
+        self.model = model.to(device)
         self.model.eval()
-        self.context_len          = int(context_len)
-        self.ref_mu               = ref_mu.astype(np.float32)
-        self.ref_sd               = ref_sd.astype(np.float32)
+
+        self.context_len = int(context_len)
+        self.ref_mu = ref_mu.astype(np.float32)
+        self.ref_sd = ref_sd.astype(np.float32)
+
         self.threshold_from_train = float(threshold_from_train)
         self.hi = float(hi) if hi is not None else self.threshold_from_train
         self.lo = float(lo) if lo is not None else self.threshold_from_train - 0.1
-        self.smoother  = RealtimeSmoother(win=smooth_win)
-        self.hysteresis= RealtimeHysteresis(hi=self.hi, lo=self.lo, min_run=min_run)
-        self.imputer   = CausalFeatureImputer(BEAT_FEATURES, max_gap=SHORT_GAP_THRESH)
+
+        self.smoother = RealtimeSmoother(win=smooth_win)
+        self.hysteresis = RealtimeHysteresis(
+            hi=self.hi,
+            lo=self.lo,
+            min_run=min_run,
+        )
+
+        self.imputer = CausalFeatureImputer(
+            BEAT_FEATURES,
+            max_gap=SHORT_GAP_THRESH,
+        )
+
         self.beat_window = deque(maxlen=self.context_len)
-        self.device      = device
+        self.device = device
 
     def update_with_beat(self, beat_feat):
-        imputed  = self.imputer.transform_one(beat_feat)
-        raw_vec  = np.array([imputed[c] for c in BEAT_FEATURES], dtype=np.float32)
-        norm_vec = normalize_feature_vector(raw_vec, self.ref_mu, self.ref_sd)
+        imputed = self.imputer.transform_one(beat_feat)
+
+        raw_vec = np.array(
+            [imputed[c] for c in BEAT_FEATURES],
+            dtype=np.float32,
+        )
+
+        norm_vec = normalize_feature_vector(
+            raw_vec,
+            self.ref_mu,
+            self.ref_sd,
+        )
+
         self.beat_window.append(norm_vec)
+
         time_sec = float(beat_feat["sp_sample"]) / FS
 
         if len(self.beat_window) < self.context_len:
-            return {"time_sec": time_sec, "p_apnea": None,
-                    "p_apnea_smooth": None, "pred_label": None,
-                    "status": "warming_up"}
+            return {
+                "time_sec": time_sec,
+                "p_apnea": None,
+                "p_apnea_smooth": None,
+                "pred_label": None,
+                "status": "warming_up",
+            }
 
-        x   = np.stack(list(self.beat_window), axis=0).astype(np.float32)
+        x = np.stack(list(self.beat_window), axis=0).astype(np.float32)
         x_t = torch.from_numpy(x[None, :, :]).to(self.device)
+
         with torch.no_grad():
             p = torch.sigmoid(self.model(x_t)).cpu().item()
 
         p_smooth = self.smoother.update(p)
-        label    = self.hysteresis.update(p_smooth)
-        return {"time_sec": time_sec, "p_apnea": float(p),
-                "p_apnea_smooth": float(p_smooth), "pred_label": int(label),
-                "status": "ok"}
+        label = self.hysteresis.update(p_smooth)
+
+        return {
+            "time_sec": time_sec,
+            "p_apnea": float(p),
+            "p_apnea_smooth": float(p_smooth),
+            "pred_label": int(label),
+            "status": "ok",
+        }
 
 
 def detect_wear_green(ppg_green, fs=FS):
@@ -447,24 +601,32 @@ def detect_wear_green(ppg_green, fs=FS):
     """
     try:
         from ppg.wear_runtime import wear_green_to_pred
-        # numpy array면 list로 변환
-        if hasattr(ppg_green, 'tolist'):
+
+        if hasattr(ppg_green, "tolist"):
             ppg_green = ppg_green.tolist()
+
         result = wear_green_to_pred(list(ppg_green))
+
         return {
             "valid": result.get("valid", False),
             "label": result.get("label"),
-            "prob":  result.get("prob"),
+            "prob": result.get("prob"),
             "error": result.get("error"),
         }
     except Exception as e:
         logger.warning(f"[detect_wear_green] failed: {e}")
-        return {"valid": False, "label": None, "prob": None, "error": str(e)}
+        return {
+            "valid": False,
+            "label": None,
+            "prob": None,
+            "error": str(e),
+        }
+
 
 def compute_r_ratio_series(ppg_red: list, ppg_ir: list, fs: float = FS) -> list:
     """R ratio = (AC/DC of Red) / (AC/DC of IR). 2초 윈도우, 1초 슬라이딩."""
     red  = np.asarray(ppg_red, dtype=float)
-    ir   = np.asarray(ppg_ir,  dtype=float)
+    ir   = np.asarray(ppg_ir, dtype=float)
     win  = int(fs * 2)
     step = int(fs)
     n    = min(len(red), len(ir))
@@ -472,19 +634,25 @@ def compute_r_ratio_series(ppg_red: list, ppg_ir: list, fs: float = FS) -> list:
 
     for i in range(0, n - win + 1, step):
         seg_r = red[i: i + win]
-        seg_i = ir[i:  i + win]
-        dc_r  = np.nanmean(seg_r)
-        dc_i  = np.nanmean(seg_i)
+        seg_i = ir[i: i + win]
+
+        dc_r = np.nanmean(seg_r)
+        dc_i = np.nanmean(seg_i)
+
         if dc_r < 1e-6 or dc_i < 1e-6:
             ratios.append(None)
             continue
+
         ac_r = float(np.sqrt(np.nanmean((seg_r - dc_r) ** 2)))
         ac_i = float(np.sqrt(np.nanmean((seg_i - dc_i) ** 2)))
+
         pi_r = ac_r / dc_r
         pi_i = ac_i / dc_i
+
         if pi_i < 1e-9:
             ratios.append(None)
             continue
+
         ratios.append(round(pi_r / pi_i, 4))
 
     return ratios
@@ -495,16 +663,18 @@ class ApneaEngine:
     _cls_lock = threading.Lock()
 
     def __init__(self):
-        self._model        = None
-        self._model_cfg    = None
-        self._model_ready  = False
-        self._dev_lock     = threading.Lock()
-        self._extractors   : Dict[str, RealtimeBeatExtractor] = {}
-        self._detectors    : Dict[str, RealtimeApneaDetector] = {}
-        self._baseline_buf : Dict[str, List[float]]           = {}
-        self._baseline_done: Dict[str, bool]                  = {}
-        self._packet_count : Dict[str, int]                   = {}
+        self._model = None
+        self._model_cfg = None
+        self._model_ready = False
+        self._dev_lock = threading.Lock()
+
+        self._extractors: Dict[str, RealtimeBeatExtractor] = {}
+        self._detectors: Dict[str, RealtimeApneaDetector] = {}
+        self._baseline_buf: Dict[str, List[float]] = {}
+        self._baseline_done: Dict[str, bool] = {}
+        self._packet_count: Dict[str, int] = {}
         self._baseline_active: Dict[str, bool] = {}
+        self._session_pk: Dict[str, int] = {}
 
     @classmethod
     def get_instance(cls):
@@ -516,24 +686,29 @@ class ApneaEngine:
 
     def load_model(self, path: str) -> bool:
         try:
-            ckpt   = torch.load(path, map_location="cpu")
-            cfg    = ckpt["config"]
+            ckpt = torch.load(path, map_location="cpu")
+            cfg = ckpt["config"]
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            model  = CausalTransformerBinary(
-                input_dim   = len(BEAT_FEATURES),
-                d_model     = int(cfg["d_model"]),
-                nhead       = int(cfg["nhead"]),
-                num_layers  = int(cfg["num_layers"]),
-                dropout     = float(cfg["dropout"]),
-                context_len = int(cfg["context_len"]),
+
+            model = CausalTransformerBinary(
+                input_dim=len(BEAT_FEATURES),
+                d_model=int(cfg["d_model"]),
+                nhead=int(cfg["nhead"]),
+                num_layers=int(cfg["num_layers"]),
+                dropout=float(cfg["dropout"]),
+                context_len=int(cfg["context_len"]),
             )
+
             model.load_state_dict(ckpt["model_state"])
             model.to(device).eval()
-            self._model       = model
-            self._model_cfg   = cfg
+
+            self._model = model
+            self._model_cfg = cfg
             self._model_ready = True
+
             logger.info(f"[ApneaEngine] model loaded: {path} device={device}")
             return True
+
         except Exception as e:
             logger.exception(f"[ApneaEngine] load failed: {e}")
             self._model_ready = False
@@ -547,52 +722,82 @@ class ApneaEngine:
     def model_config(self):
         return dict(self._model_cfg) if self._model_cfg else None
 
-    def start_session(self, device_id: str):
+    def start_session(self, device_id: str, session_pk: int = None):
         with self._dev_lock:
-            self._baseline_buf[device_id]    = []
-            self._baseline_done[device_id]   = False
-            self._baseline_active[device_id] = True   # ← 버튼 눌렀을 때만 True
-            self._packet_count[device_id]    = 0
-            self._extractors[device_id]      = RealtimeBeatExtractor(
-                fs=FS, rolling_seconds=13.0, safe_margin_seconds=0.6
-            )
-            self._detectors.pop(device_id, None)
-        logger.info(f"[ApneaEngine] session started: {device_id}")
+            self._baseline_buf[device_id] = []
+            self._baseline_done[device_id] = False
+            self._baseline_active[device_id] = True
+            self._packet_count[device_id] = 0
+            self._session_pk[device_id] = session_pk
 
+            self._extractors[device_id] = RealtimeBeatExtractor(
+                fs=FS,
+                rolling_seconds=20.0,
+                safe_margin_seconds=1.0,
+                min_rr_sec=0.45,
+                max_rr_sec=1.5,
+            )
+
+            self._detectors.pop(device_id, None)
+
+        logger.info(f"[ApneaEngine] session started: {device_id}")
 
     def _ensure_device(self, device_id: str):
         if device_id not in self._packet_count:
             with self._dev_lock:
-                self._baseline_buf[device_id]    = []
-                self._baseline_done[device_id]   = False
-                self._baseline_active[device_id] = False  # ← 버튼 누르기 전
-                self._packet_count[device_id]    = 0
-                self._extractors[device_id]      = RealtimeBeatExtractor(
-                    fs=FS, rolling_seconds=13.0, safe_margin_seconds=0.6
+                self._baseline_buf[device_id] = []
+                self._baseline_done[device_id] = False
+                self._baseline_active[device_id] = False
+                self._packet_count[device_id] = 0
+
+                self._extractors[device_id] = RealtimeBeatExtractor(
+                    fs=FS,
+                    rolling_seconds=20.0,
+                    safe_margin_seconds=1.0,
+                    min_rr_sec=0.45,
+                    max_rr_sec=1.5,
                 )
 
     def _finalize_baseline(self, device_id: str, session_db):
-        raw     = np.array(self._baseline_buf[device_id], dtype=float)
-        bt      = process_raw_to_beat_table_offline(raw, fs=FS)
+        from .models import ApneaSession
+        session_pk = self._session_pk.get(device_id)
+
+        # PK가 없으면 넘어온 객체에서라도 PK를 건져서 확보
+        if not session_pk and session_db is not None:
+            session_pk = getattr(session_db, "pk", None)
+
+        if not session_pk:
+            # 저장할 대상을 특정할 수 없음 → 명확히 경고 (조용히 NULL 방지)
+            logger.error(
+                f"[baseline] {device_id}: no session_pk available, "
+                f"baseline_stats will NOT be saved"
+            )
+
+        raw = np.array(self._baseline_buf[device_id], dtype=float)
+
+        bt = process_raw_to_beat_table_offline(raw, fs=FS)
         ref_seq = beat_table_to_seq_for_ref(bt)
 
         if len(ref_seq) < 10:
             logger.warning(f"[baseline] {device_id}: beats too few ({len(ref_seq)})")
+            with self._dev_lock:
+                self._baseline_buf[device_id] = []
             return
 
         ref_mu, ref_sd = compute_baseline_stats(ref_seq)
-        cfg         = self._model_cfg or {}
+
+        cfg = self._model_cfg or {}
         context_len = int(cfg.get("context_len", 20))
-        threshold   = float(cfg.get("threshold", 0.5))
-        device_str  = "cuda" if torch.cuda.is_available() else "cpu"
+        threshold = float(cfg.get("threshold", 0.5))
+        device_str = "cuda" if torch.cuda.is_available() else "cpu"
 
         detector = RealtimeApneaDetector(
-            model                = self._model,
-            context_len          = context_len,
-            ref_mu               = ref_mu,
-            ref_sd               = ref_sd,
-            threshold_from_train = threshold,
-            device               = device_str,
+            model=self._model,
+            context_len=context_len,
+            ref_mu=ref_mu,
+            ref_sd=ref_sd,
+            threshold_from_train=threshold,
+            device=device_str,
         )
 
         last_beats = ref_seq[-10:] if len(ref_seq) >= 10 else ref_seq
@@ -600,53 +805,106 @@ class ApneaEngine:
             norm_vec = normalize_feature_vector(feat_vec.astype(np.float32), ref_mu, ref_sd)
             detector.beat_window.append(norm_vec)
 
+        old = self._extractors.get(device_id)
 
-        old     = self._extractors.get(device_id)
-        new_ext = RealtimeBeatExtractor(fs=FS, rolling_seconds=13.0, safe_margin_seconds=0.6)
+        new_ext = RealtimeBeatExtractor(
+            fs=FS,
+            rolling_seconds=20.0,
+            safe_margin_seconds=1.0,
+            min_rr_sec=0.45,
+            max_rr_sec=1.5,
+        )
+
         if old is not None:
-            new_ext.raw_buffer                = deque(old.raw_buffer, maxlen=old.rolling_n)
-            new_ext.global_sample_idx         = old.global_sample_idx
-            new_ext.buffer_start_global_idx   = old.buffer_start_global_idx
-            new_ext.prev_sp_global            = old.prev_sp_global
-            new_ext.last_processed_sp_global  = old.last_processed_sp_global
-            new_ext.beat_idx                  = old.beat_idx
+            new_ext.raw_buffer = deque(old.raw_buffer, maxlen=new_ext.rolling_n)
+            new_ext.global_sample_idx = old.global_sample_idx
+            new_ext.buffer_start_global_idx = old.buffer_start_global_idx
+            new_ext.prev_sp_global = old.prev_sp_global
+            new_ext.last_processed_sp_global = old.last_processed_sp_global
+            new_ext.beat_idx = old.beat_idx
 
+        # DB 저장: 무조건 PK로 직접 갱신 + 검증 
+        #      메모리 상태(baseline_done) 변경 "전"에 먼저 저장 시도
+        baseline_stats = {
+            "ref_mu": ref_mu.tolist(),
+            "ref_sd": ref_sd.tolist(),
+            "num_beats": int(len(ref_seq)),
+            "prefilled_beats": int(min(context_len - 1, len(ref_seq))),
+            "rolling_seconds": 20.0,
+            "safe_margin_seconds": 1.0,
+            "min_rr_sec": 0.45,
+            "max_rr_sec": 1.5,
+        }
+
+        saved_ok = False
+        if session_pk:
+            # 넘어온 session_db 객체를 쓰지 않고, PK 기준 .update()로 직접 DB row 갱신
+            # → stale 객체 / 세션 불일치 / update_fields 누락 문제를 한 번에 제거
+            try:
+                updated = ApneaSession.objects.filter(pk=session_pk).update(
+                    baseline_ready=True,
+                    baseline_stats=baseline_stats,
+                    model_config=dict(cfg),
+                )
+                if updated == 1:
+                    saved_ok = True
+                else:
+                    # PK는 있는데 해당 row가 없음(삭제됨 등) → 명확히 경고
+                    logger.error(
+                        f"[baseline] {device_id}: session pk={session_pk} "
+                        f"not found for update (updated={updated})"
+                    )
+            except Exception as e:
+                logger.error(f"[baseline] DB save error (pk={session_pk}): {e}")
+
+            # 저장 검증: 진짜로 NULL이 아닌지 다시 읽어 확인
+            if saved_ok:
+                try:
+                    row = ApneaSession.objects.filter(pk=session_pk).values(
+                        "baseline_stats"
+                    ).first()
+                    if not row or row["baseline_stats"] is None:
+                        saved_ok = False
+                        logger.error(
+                            f"[baseline] {device_id}: verify failed, "
+                            f"baseline_stats still NULL pk={session_pk}"
+                        )
+                except Exception as e:
+                    logger.warning(f"[baseline] verify read error: {e}")
+
+        # 메모리 상태 확정: 추론 단계로 전환
+        #     (DB 저장 성공 여부와 무관하게 추론은 시작 — 단 로그로 분리 추적)
         with self._dev_lock:
-            self._detectors[device_id]     = detector
-            self._extractors[device_id]    = new_ext
+            self._detectors[device_id] = detector
+            self._extractors[device_id] = new_ext
             self._baseline_done[device_id] = True
 
-        if session_db is not None:
-            try:
-                session_db.baseline_ready = True
-                session_db.baseline_stats = {
-                    "ref_mu":    ref_mu.tolist(),
-                    "ref_sd":    ref_sd.tolist(),
-                    "num_beats": int(len(ref_seq)),
-                }
-                session_db.model_config = dict(cfg)
-                session_db.save(update_fields=[
-                    "baseline_ready", "baseline_stats", "model_config"
-                ])
-            except Exception as e:
-                logger.warning(f"[baseline] DB save error: {e}")
+        logger.info(
+            f"[ApneaEngine] baseline done: {device_id} "
+            f"beats={len(ref_seq)} "
+            f"prefill={min(context_len - 1, len(ref_seq))} "
+            f"db_saved={saved_ok} pk={session_pk}"  # ← NULL 추적 핵심 로그
+        )
 
-        logger.info(f"[ApneaEngine] baseline done: {device_id} beats={len(ref_seq)}")
+    def process_chunk(
+        self,
+        device_id: str,
+        ppg_green: list,
+        ppg_ir: list = None,
+        ppg_red: list = None,
+        session_db=None,
+        packet_timestamp=None,
+    ) -> dict:
 
-    def process_chunk(self, device_id: str, ppg_green: list,
-                    ppg_ir: list = None, ppg_red: list = None,
-                    session_db=None, packet_timestamp=None) -> dict:
-
-        # ★ lock 밖에서 먼저 device 초기화
         self._ensure_device(device_id)
 
         with self._dev_lock:
             self._packet_count[device_id] += 1
-            packet_idx    = self._packet_count[device_id]
+            packet_idx = self._packet_count[device_id]
             baseline_done = self._baseline_done[device_id]
 
-        arr       = np.asarray(ppg_green, dtype=float)
-        wear      = detect_wear_green(arr)
+        arr = np.asarray(ppg_green, dtype=float)
+        wear = detect_wear_green(arr)
         extractor = self._extractors.get(device_id)
 
         if ppg_ir and ppg_red:
@@ -655,16 +913,20 @@ class ApneaEngine:
             r_ratio = []
 
         result = {
-            "packet_index":      packet_idx,
-            "baseline_ready":    baseline_done,
-            "baseline_progress": min(1.0, len(self._baseline_buf.get(device_id, [])) / MIN_BASELINE_SAMPLES),            "wear":              wear,
-            "r_ratio_series":    r_ratio,
-            "beat_results":      [],
-            "p_apnea":           None,
-            "p_apnea_smooth":    None,
-            "pred_label":        None,
-            "pred_status":       "baseline",
-            "phase":             "baseline",
+            "packet_index": packet_idx,
+            "baseline_ready": baseline_done,
+            "baseline_progress": min(
+                1.0,
+                len(self._baseline_buf.get(device_id, [])) / MIN_BASELINE_SAMPLES,
+            ),
+            "wear": wear,
+            "r_ratio_series": r_ratio,
+            "beat_results": [],
+            "p_apnea": None,
+            "p_apnea_smooth": None,
+            "pred_label": None,
+            "pred_status": "baseline",
+            "phase": "baseline",
         }
 
         if not baseline_done:
@@ -674,62 +936,85 @@ class ApneaEngine:
                 result["pred_status"] = "waiting_for_session"
                 return result
 
-            # ★ 패킷 측정 완료 시간이 세션 시작 이전이면 제외
             include_in_baseline = True
+
             if packet_timestamp and session_db and session_db.started_at:
                 from datetime import timedelta
+
                 watch_end_time = packet_timestamp + timedelta(seconds=12)
                 if watch_end_time <= session_db.started_at:
                     include_in_baseline = False
-                    logger.info(f"[baseline] skip packet before session: watch_end={watch_end_time}, started_at={session_db.started_at}")
+                    logger.info(
+                        f"[baseline] skip packet before session: "
+                        f"watch_end={watch_end_time}, started_at={session_db.started_at}"
+                    )
 
+            if not include_in_baseline:
+                result["pred_status"] = "before_session"
+                result["phase"]       = "waiting"  # ← baseline이 아님을 표시
+                if extractor is not None:
+                    extractor.feed_packet(arr)  # extractor는 계속 업데이트 (raw buffer 유지)
+                return result
+            
+            
             if include_in_baseline:
                 with self._dev_lock:
                     self._baseline_buf[device_id].extend(arr.tolist())
+
                 if extractor is not None:
                     extractor.feed_packet(arr)
 
             if len(self._baseline_buf[device_id]) >= MIN_BASELINE_SAMPLES:
                 self._finalize_baseline(device_id, session_db)
+
                 with self._dev_lock:
                     baseline_done = self._baseline_done[device_id]
-                result["baseline_ready"]    = baseline_done
+
+                result["baseline_ready"] = baseline_done
                 result["baseline_progress"] = 1.0
-                result["pred_status"]       = "baseline_just_completed" if baseline_done else "baseline_failed"
+                result["pred_status"] = (
+                    "baseline_just_completed"
+                    if baseline_done
+                    else "baseline_failed"
+                )
+
             return result
 
-        # ── inference 구간 ──
         detector = self._detectors.get(device_id)
+
         if extractor is None or detector is None or not self._model_ready:
-            result["phase"]       = "error"
+            result["phase"] = "error"
             result["pred_status"] = "not_ready"
             return result
 
-        new_beats    = extractor.feed_packet(arr)
+        new_beats = extractor.feed_packet(arr)
         beat_results = []
-        last         = None
+        last = None
 
         for beat_feat in new_beats:
             r = detector.update_with_beat(beat_feat)
+
             if r is None:
                 continue
+
             beat_results.append({
-                "time_sec":       r.get("time_sec"),
-                "p_apnea":        r.get("p_apnea"),
+                "time_sec": r.get("time_sec"),
+                "p_apnea": r.get("p_apnea"),
                 "p_apnea_smooth": r.get("p_apnea_smooth"),
-                "pred_label":     r.get("pred_label"),
-                "status":         r.get("status", "ok"),
+                "pred_label": r.get("pred_label"),
+                "status": r.get("status", "ok"),
             })
+
             last = r
 
-        result["phase"]        = "inference"
+        result["phase"] = "inference"
         result["beat_results"] = beat_results
 
         if last is not None:
-            result["p_apnea"]        = last.get("p_apnea")
+            result["p_apnea"] = last.get("p_apnea")
             result["p_apnea_smooth"] = last.get("p_apnea_smooth")
-            result["pred_label"]     = last.get("pred_label")
-            result["pred_status"]    = last.get("status", "ok")
+            result["pred_label"] = last.get("pred_label")
+            result["pred_status"] = last.get("status", "ok")
         else:
             result["pred_status"] = "no_beats_detected"
 

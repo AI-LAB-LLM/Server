@@ -15,6 +15,11 @@ anomaly_runtime.py
 - 지도 표시용 좌표 보정은 5분마다 가능하지만,
   DTW 이상탐지는 단일 좌표가 아니라 trip 단위 비교입니다.
 - 따라서 MOVE 구간이 충분히 형성된 뒤 AnomalyRuntime 결과가 의미 있습니다.
+
+수정 사항
+- 너무 짧은 MOVE block이 trip으로 생성되는 문제 방지
+- 5분 단위 데이터 기준, 첫 MOVE부터 다음 STOP/non-MOVE까지 30분 이상일 때만 trip 생성
+- 마지막이 MOVE로 끝나는 경우는 아직 이동 중이므로 trip 생성하지 않음
 """
 
 import math
@@ -49,6 +54,7 @@ INTERP_TOLERANCE_MAP_M = {
 # =========================================================
 # 기본 유틸
 # =========================================================
+
 def haversine_m(lat1, lon1, lat2, lon2):
     R = 6371000.0
     lat1, lon1, lat2, lon2 = map(
@@ -90,7 +96,12 @@ def compute_bearings(latlon):
 
     out = np.zeros(n, dtype=float)
     for i in range(1, n):
-        out[i] = bearing_deg(latlon[i - 1, 0], latlon[i - 1, 1], latlon[i, 0], latlon[i, 1])
+        out[i] = bearing_deg(
+            latlon[i - 1, 0],
+            latlon[i - 1, 1],
+            latlon[i, 0],
+            latlon[i, 1],
+        )
     out[0] = out[1]
     return out
 
@@ -104,6 +115,7 @@ def confidence_to_tolerance(level):
 # =========================================================
 # DTW cost
 # =========================================================
+
 def local_cost(p1, p2, b1, b2, tol1_m=0.0, tol2_m=0.0):
     dist = haversine_m(p1[0], p1[1], p2[0], p2[1])
     ang = angle_diff_deg(b1, b2)
@@ -115,8 +127,11 @@ def local_cost(p1, p2, b1, b2, tol1_m=0.0, tol2_m=0.0):
     dist_eff = max(float(dist) - tol_eff_m, 0.0)
 
     cost = A_COST * (dist_eff / D0_M)
+
+    # 현재는 B_COST = 0.0 이므로 방향각 비용은 실제로 반영되지 않음
     if B_COST > 0:
         cost += B_COST * (ang / T0_DEG)
+
     return float(cost)
 
 
@@ -148,7 +163,11 @@ def dtw_distance_latlon(seq1_latlon, seq2_latlon, seq1_tol=None, seq2_tol=None):
                 seq1_tol[i - 1],
                 seq2_tol[j - 1],
             )
-            dp[i, j] = c + min(dp[i - 1, j], dp[i, j - 1], dp[i - 1, j - 1])
+            dp[i, j] = c + min(
+                dp[i - 1, j],
+                dp[i, j - 1],
+                dp[i - 1, j - 1],
+            )
 
     return float(dp[n, m] / max(n, m, 1))
 
@@ -156,24 +175,31 @@ def dtw_distance_latlon(seq1_latlon, seq2_latlon, seq1_tol=None, seq2_tol=None):
 # =========================================================
 # 컬럼 정규화
 # =========================================================
+
 def normalize_processed_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+
     if "longitude" in df.columns and "Longitude" not in df.columns:
         df["Longitude"] = df["longitude"]
+
     if "Longitude" in df.columns and "longitude" not in df.columns:
         df["longitude"] = df["Longitude"]
+
     if "Timestamp" in df.columns:
         df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
     elif "Datetime" in df.columns:
         df["Timestamp"] = pd.to_datetime(df["Datetime"], errors="coerce")
+
     return df
 
 
 # =========================================================
 # trip sequence 구성
 # =========================================================
+
 def build_trip_sequence_dict(points_df: pd.DataFrame, apply_tolerance=True):
     df = normalize_processed_columns(points_df)
+
     required = ["trip_id", "Latitude", "Longitude"]
     for col in required:
         if col not in df.columns:
@@ -186,8 +212,10 @@ def build_trip_sequence_dict(points_df: pd.DataFrame, apply_tolerance=True):
         df = df.sort_values(["trip_id", "_row_order"]).reset_index(drop=True)
 
     seq_dict = {}
+
     for trip_id, group in df.groupby("trip_id", sort=False):
         group = group.dropna(subset=["Latitude", "Longitude"]).copy()
+
         if len(group) < 2:
             continue
 
@@ -196,62 +224,102 @@ def build_trip_sequence_dict(points_df: pd.DataFrame, apply_tolerance=True):
 
         if apply_tolerance:
             if "Predicted_confidence_level" in group.columns:
-                conf_tol = group["Predicted_confidence_level"].apply(confidence_to_tolerance).to_numpy(dtype=float)
+                conf_tol = (
+                    group["Predicted_confidence_level"]
+                    .apply(confidence_to_tolerance)
+                    .to_numpy(dtype=float)
+                )
+
                 if "Predicted_Latitude" in group.columns and "Predicted_longitude" in group.columns:
-                    has_pred = (group["Predicted_Latitude"].notna() & group["Predicted_longitude"].notna()).to_numpy()
+                    has_pred = (
+                        group["Predicted_Latitude"].notna()
+                        & group["Predicted_longitude"].notna()
+                    ).to_numpy()
                 else:
                     has_pred = np.zeros(len(group), dtype=bool)
+
                 tol_m[has_pred] = np.maximum(tol_m[has_pred], conf_tol[has_pred])
 
             if "interp_method" in group.columns:
-                methods = group["interp_method"].fillna("").astype(str).str.lower().to_numpy()
+                methods = (
+                    group["interp_method"]
+                    .fillna("")
+                    .astype(str)
+                    .str.lower()
+                    .to_numpy()
+                )
+
                 for method, tol in INTERP_TOLERANCE_MAP_M.items():
                     mask = methods == method.lower()
                     tol_m[mask] = np.maximum(tol_m[mask], float(tol))
 
-        seq_dict[str(trip_id)] = {"latlon": latlon, "tol_m": tol_m}
+        seq_dict[str(trip_id)] = {
+            "latlon": latlon,
+            "tol_m": tol_m,
+        }
 
     return seq_dict
 
 
 def build_trip_meta(summary_df: pd.DataFrame) -> pd.DataFrame:
     meta = summary_df.copy()
+
     if "trip_id" not in meta.columns:
         raise ValueError("summary_df에 trip_id 컬럼이 필요합니다.")
+
     if "od_key" not in meta.columns:
         raise ValueError("summary_df에 od_key 컬럼이 필요합니다.")
+
     meta["trip_id"] = meta["trip_id"].astype(str)
     meta["od_key"] = meta["od_key"].astype(str)
+
     return meta
 
 
 def build_baseline_library(baseline_points, baseline_summary):
-    baseline_seq_dict = build_trip_sequence_dict(baseline_points, apply_tolerance=False)
+    baseline_seq_dict = build_trip_sequence_dict(
+        baseline_points,
+        apply_tolerance=False,
+    )
+
     meta = build_trip_meta(baseline_summary)
     meta = meta[meta["trip_id"].isin(baseline_seq_dict.keys())].copy()
 
     od_to_trip_ids = {}
+
     for od_key, group in meta.groupby("od_key", sort=False):
         trip_ids = group["trip_id"].astype(str).tolist()
+
         if len(trip_ids) >= MIN_BASELINES_PER_OD:
             od_to_trip_ids[str(od_key)] = trip_ids
+
     return baseline_seq_dict, od_to_trip_ids
 
 
 def choose_top_k(n_candidates):
     if n_candidates <= 0:
         return 0
+
     if n_candidates >= TOP_K_DEFAULT:
         return TOP_K_DEFAULT
+
     if n_candidates == 1:
         return 1
+
     return min(2, n_candidates)
 
 
 # =========================================================
 # DTW score
 # =========================================================
-def score_one_test_trip(test_trip_id, test_seq, test_od_key, baseline_seq_dict, od_to_trip_ids):
+
+def score_one_test_trip(
+    test_trip_id,
+    test_seq,
+    test_od_key,
+    baseline_seq_dict,
+    od_to_trip_ids,
+):
     row = {
         "trip_id": test_trip_id,
         "od_key": test_od_key,
@@ -268,16 +336,20 @@ def score_one_test_trip(test_trip_id, test_seq, test_od_key, baseline_seq_dict, 
         return row
 
     dists = []
+
     for baseline_trip_id in od_to_trip_ids[test_od_key]:
         baseline_seq = baseline_seq_dict.get(baseline_trip_id)
+
         if baseline_seq is None:
             continue
+
         d = dtw_distance_latlon(
             test_seq["latlon"],
             baseline_seq["latlon"],
             test_seq["tol_m"],
             baseline_seq["tol_m"],
         )
+
         dists.append((baseline_trip_id, d))
 
     if len(dists) == 0:
@@ -294,31 +366,60 @@ def score_one_test_trip(test_trip_id, test_seq, test_od_key, baseline_seq_dict, 
     row["score_min"] = float(np.min([x[1] for x in dists]))
     row["baseline_match_trip_ids"] = ",".join([x[0] for x in topk])
     row["status"] = "ok"
+
     return row
 
 
-def score_test_trips(baseline_points, baseline_summary, test_points, test_summary):
-    baseline_seq_dict, od_to_trip_ids = build_baseline_library(baseline_points, baseline_summary)
-    test_seq_dict = build_trip_sequence_dict(test_points, apply_tolerance=True)
+def score_test_trips(
+    baseline_points,
+    baseline_summary,
+    test_points,
+    test_summary,
+):
+    baseline_seq_dict, od_to_trip_ids = build_baseline_library(
+        baseline_points,
+        baseline_summary,
+    )
+
+    test_seq_dict = build_trip_sequence_dict(
+        test_points,
+        apply_tolerance=True,
+    )
+
     test_meta = build_trip_meta(test_summary)
     test_meta = test_meta[test_meta["trip_id"].isin(test_seq_dict.keys())].copy()
 
     rows = []
+
     for _, r in test_meta.iterrows():
         trip_id = str(r["trip_id"])
         od_key = str(r["od_key"])
-        score_row = score_one_test_trip(trip_id, test_seq_dict[trip_id], od_key, baseline_seq_dict, od_to_trip_ids)
+
+        score_row = score_one_test_trip(
+            trip_id,
+            test_seq_dict[trip_id],
+            od_key,
+            baseline_seq_dict,
+            od_to_trip_ids,
+        )
+
         merged = dict(r.to_dict())
         merged.update(score_row)
         rows.append(merged)
+
     return pd.DataFrame(rows)
 
 
-def attach_threshold_and_flag(scored_df, threshold_df, threshold_col="score_p95"):
+def attach_threshold_and_flag(
+    scored_df,
+    threshold_df,
+    threshold_col="score_p95",
+):
     if len(scored_df) == 0:
         return scored_df.copy()
 
     out = scored_df.copy()
+
     if len(threshold_df) == 0:
         out["threshold"] = np.nan
         out["is_anomaly"] = np.nan
@@ -326,20 +427,27 @@ def attach_threshold_and_flag(scored_df, threshold_df, threshold_col="score_p95"
 
     th = threshold_df[["od_key", threshold_col]].copy()
     th = th.rename(columns={threshold_col: "threshold"})
+
     out = out.merge(th, on="od_key", how="left")
 
     def decide(row):
         if row.get("status") != "ok":
             return np.nan
+
         if pd.isna(row.get("threshold")):
             return np.nan
+
         return int(row["score_topk_mean"] > row["threshold"])
 
     out["is_anomaly"] = out.apply(decide, axis=1)
+
     return out
 
 
-def add_final_route_label_simple(scored_df, unseen_margin_ratio=UNSEEN_MARGIN_RATIO):
+def add_final_route_label_simple(
+    scored_df,
+    unseen_margin_ratio=UNSEEN_MARGIN_RATIO,
+):
     out = scored_df.copy()
 
     def classify(row):
@@ -349,21 +457,27 @@ def add_final_route_label_simple(scored_df, unseen_margin_ratio=UNSEEN_MARGIN_RA
 
         if status != "ok":
             return "anomaly"
+
         if pd.isna(score) or pd.isna(threshold):
             return "anomaly"
+
         if score <= threshold:
             return "known_normal"
+
         if score <= threshold * unseen_margin_ratio:
             return "unseen_path_same_od"
+
         return "anomaly"
 
     out["final_route_label"] = out.apply(classify, axis=1)
+
     return out
 
 
 # =========================================================
 # Runtime class
 # =========================================================
+
 class AnomalyRuntime:
     def __init__(self, anomaly_model_path: str):
         self.artifact = joblib.load(anomaly_model_path)
@@ -376,16 +490,21 @@ class AnomalyRuntime:
         self.config = self.artifact.get("config", {})
 
     def make_test_trips(self, processed_df: pd.DataFrame):
-        return extract_strict_test_trips(processed_df, self.anchor_zones)
+        return extract_strict_test_trips(
+            processed_df,
+            self.anchor_zones,
+        )
 
     def predict_from_processed_gps(self, processed_df: pd.DataFrame) -> pd.DataFrame:
         test_trip_points, test_trip_summary = self.make_test_trips(processed_df)
 
         if len(test_trip_points) == 0 or len(test_trip_summary) == 0:
-            return pd.DataFrame([{
-                "status": "no_trip_detected",
-                "final_route_label": "anomaly",
-            }])
+            return pd.DataFrame([
+                {
+                    "status": "no_trip_detected",
+                    "final_route_label": "anomaly",
+                }
+            ])
 
         scored_df = score_test_trips(
             baseline_points=self.baseline_trip_points,
@@ -402,198 +521,465 @@ class AnomalyRuntime:
 
         scored_df = add_final_route_label_simple(
             scored_df,
-            unseen_margin_ratio=self.config.get("UNSEEN_MARGIN_RATIO", UNSEEN_MARGIN_RATIO),
+            unseen_margin_ratio=self.config.get(
+                "UNSEEN_MARGIN_RATIO",
+                UNSEEN_MARGIN_RATIO,
+            ),
         )
+
         return scored_df
 
-
-# =========================================================
-# strict anchor-context extractor override
-# =========================================================
-def extract_strict_test_trips(processed_df: pd.DataFrame, anchor_zones: pd.DataFrame):
+def extract_strict_test_trips(
+    processed_df: pd.DataFrame,
+    anchor_zones: pd.DataFrame,
+):
     """
-    기존 make_test_baseline_0409_2.py의 핵심 정책을 서버용으로 반영한 trip extractor.
+    baseline 생성 코드와 같은 방식으로 test trip을 추출한다.
 
-    - test에서 anchor를 새로 만들지 않고 anomaly artifact의 train anchor를 그대로 사용
-    - nearest fallback 없음: anchor 반경 안에 실제로 들어온 경우만 OD로 인정
-    - origin/destination은 MOVE block 경계점 하나가 아니라 block 전후 문맥으로 판정
-    - train에 없는 새로운 장소는 od_key=None으로 남고, score 단계에서 unknown_od/anomaly 처리
+    baseline과 맞춘 핵심 정책:
+    - MOVE block 추출
+    - block 시작/끝 좌표에 가장 가까운 train anchor를 origin/dest로 지정
+    - origin anchor에서 충분히 벗어난 지점으로 start trim
+    - destination anchor에 도착하기 직전으로 end trim
+    - trim된 구간만 DTW sequence로 사용
+
+    서버용 추가 정책:
+    - sliding window 중간에서 시작한 MOVE block은 제외
+    - 5분 단위 데이터 기준 30분 미만 MOVE는 제외
+    - 마지막이 MOVE로 끝난 경우는 아직 이동 중이므로 제외
     """
+
     df = normalize_processed_columns(processed_df)
+
     if "state_primary" not in df.columns:
         raise ValueError("processed_df에 state_primary 컬럼이 필요합니다.")
+
     if "device_id" not in df.columns:
         raise ValueError("processed_df에 device_id 컬럼이 필요합니다.")
 
-    MIN_MOVE_STEPS_LOCAL = 2
-    MIN_NET_DISP_M_LOCAL = 100.0
-    MIN_PATH_LEN_M_LOCAL = 200.0
-    SHORT_MIN_DISP_M = 30.0
-    SHORT_MIN_PATH_M = 30.0
-    SHORT_MIN_DWELL_MIN = 10.0
-    SAME_PLACE_EPS_M = 30.0
-    PRE_CONTEXT_STEPS = 6
-    POST_CONTEXT_STEPS = 6
+    # =====================================================
+    # baseline 코드와 맞춘 설정값
+    # =====================================================
+    MIN_MOVE_STEPS_LOCAL = 3
+    MIN_NET_DISP_M_LOCAL = 300.0
+    MIN_PATH_LEN_M_LOCAL = 500.0
 
-    def anchor_cols(anchors):
-        if anchors is None or len(anchors) == 0:
-            return None
-        if {"anchor_id", "anchor_lat", "anchor_lon", "anchor_radius_m"}.issubset(anchors.columns):
-            return "anchor_id", "anchor_lat", "anchor_lon", "anchor_radius_m"
-        if {"zone_id", "center_lat", "center_lon", "radius_m"}.issubset(anchors.columns):
-            return "zone_id", "center_lat", "center_lon", "radius_m"
-        return None
+    START_EXIT_DIST_M = 30.0
+    START_MIN_PATH_FROM_BLOCK_START_M = 150.0
+    START_KEEP_MOVE_STEPS = 2
 
-    def anchors_for_device(anchors, device_id):
+    END_STOP_CONFIRM_STEPS = 2
+    END_LOW_SPEED_MPS = 0.5
+    END_MIN_DWELL_MIN = 10.0
+
+    REQUIRE_STOP_AROUND_BLOCK = False
+
+    # 서버에서 짧은 MOVE가 anomaly로 저장되는 문제 방지용
+    MIN_MOVE_DURATION_MIN_LOCAL = 30.0
+
+    def norm_state(value):
+        return str(value).strip().upper()
+
+    def is_move(value):
+        return norm_state(value) == "MOVE"
+
+    def is_stop(value):
+        return norm_state(value) == "STOP"
+
+    # =====================================================
+    # anchor DataFrame 정규화
+    # =====================================================
+    def normalize_anchor_table(anchors, device_id):
         if anchors is None or len(anchors) == 0:
             return pd.DataFrame()
+
         sub = anchors.copy()
+
         if "device_id" in sub.columns and sub["device_id"].notna().any():
             sub = sub[sub["device_id"].astype(str) == str(device_id)].copy()
-        return sub
 
-    def inside_anchor_ids(lat, lon, anchors, device_id):
+        if {
+            "anchor_id",
+            "anchor_lat",
+            "anchor_lon",
+            "anchor_radius_m",
+        }.issubset(sub.columns):
+            out = sub[
+                ["anchor_id", "anchor_lat", "anchor_lon", "anchor_radius_m"]
+            ].copy()
+
+        elif {
+            "zone_id",
+            "center_lat",
+            "center_lon",
+            "radius_m",
+        }.issubset(sub.columns):
+            out = sub[
+                ["zone_id", "center_lat", "center_lon", "radius_m"]
+            ].copy()
+            out = out.rename(
+                columns={
+                    "zone_id": "anchor_id",
+                    "center_lat": "anchor_lat",
+                    "center_lon": "anchor_lon",
+                    "radius_m": "anchor_radius_m",
+                }
+            )
+
+        else:
+            return pd.DataFrame()
+
+        out = out.dropna(
+            subset=["anchor_id", "anchor_lat", "anchor_lon", "anchor_radius_m"]
+        ).copy()
+
+        if len(out) == 0:
+            return pd.DataFrame()
+
+        out["anchor_id"] = out["anchor_id"].astype(int)
+        out["anchor_lat"] = out["anchor_lat"].astype(float)
+        out["anchor_lon"] = out["anchor_lon"].astype(float)
+        out["anchor_radius_m"] = out["anchor_radius_m"].astype(float)
+
+        return out.reset_index(drop=True)
+
+    def nearest_anchor(lat, lon, anchors_norm):
+        if anchors_norm is None or len(anchors_norm) == 0:
+            return None, None
+
         if pd.isna(lat) or pd.isna(lon):
-            return []
-        sub = anchors_for_device(anchors, device_id)
-        cols = anchor_cols(sub)
-        if cols is None:
-            return []
-        id_col, lat_col, lon_col, r_col = cols
-        found = []
-        for _, a in sub.iterrows():
-            if pd.isna(a[lat_col]) or pd.isna(a[lon_col]) or pd.isna(a[r_col]):
-                continue
-            d = haversine_m(lat, lon, a[lat_col], a[lon_col])
-            if d <= float(a[r_col]):
-                found.append((int(a[id_col]), float(d)))
-        found.sort(key=lambda x: x[1])
-        return found
+            return None, None
+
+        best_id = None
+        best_dist = float("inf")
+
+        for _, a in anchors_norm.iterrows():
+            d = haversine_m(
+                lat,
+                lon,
+                a["anchor_lat"],
+                a["anchor_lon"],
+            )
+
+            if d < best_dist:
+                best_dist = d
+                best_id = int(a["anchor_id"])
+
+        return best_id, float(best_dist)
+
+    def get_anchor_by_id(anchor_id, anchors_norm):
+        if anchor_id is None:
+            return None
+
+        if anchors_norm is None or len(anchors_norm) == 0:
+            return None
+
+        sub = anchors_norm[anchors_norm["anchor_id"].astype(int) == int(anchor_id)]
+
+        if len(sub) == 0:
+            return None
+
+        return sub.iloc[0]
+
+    def point_inside_anchor(lat, lon, anchor):
+        if anchor is None:
+            return False
+
+        if pd.isna(lat) or pd.isna(lon):
+            return False
+
+        d = haversine_m(
+            lat,
+            lon,
+            anchor["anchor_lat"],
+            anchor["anchor_lon"],
+        )
+
+        return bool(d <= float(anchor["anchor_radius_m"]))
+
+    # =====================================================
+    # 기본 거리 / 시간 유틸
+    # =====================================================
+    def pair_dist_m(lat1, lon1, lat2, lon2):
+        if any(pd.isna(x) for x in [lat1, lon1, lat2, lon2]):
+            return np.nan
+
+        return float(haversine_m(lat1, lon1, lat2, lon2))
+
+    def compute_step_distance(g):
+        out = [0.0]
+
+        for i in range(1, len(g)):
+            d = pair_dist_m(
+                g.iloc[i - 1]["Latitude"],
+                g.iloc[i - 1]["Longitude"],
+                g.iloc[i]["Latitude"],
+                g.iloc[i]["Longitude"],
+            )
+
+            out.append(0.0 if pd.isna(d) else d)
+
+        return pd.Series(out, index=g.index, dtype=float)
+
+    def compute_step_seconds(g):
+        t = pd.to_datetime(g["Timestamp"], errors="coerce")
+        dt = t.diff().dt.total_seconds().fillna(0.0)
+        dt = dt.clip(lower=0.0)
+
+        return dt.astype(float)
+
+    def compute_speed_mps(g):
+        dist = compute_step_distance(g)
+        secs = compute_step_seconds(g)
+
+        speed = dist / secs.replace(0.0, np.nan)
+        speed = speed.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+        return speed.astype(float)
 
     def contiguous_blocks(mask):
         idx = np.where(mask.to_numpy())[0]
+
         if len(idx) == 0:
             return []
+
         blocks = []
         s = int(idx[0])
+
         for i in range(1, len(idx)):
             if idx[i] != idx[i - 1] + 1:
                 blocks.append((s, int(idx[i - 1])))
                 s = int(idx[i])
-        blocks.append((s, int(idx[-1])))
-        return blocks
 
-    def dist_row(g, i, j):
-        return haversine_m(g.iloc[i]["Latitude"], g.iloc[i]["Longitude"], g.iloc[j]["Latitude"], g.iloc[j]["Longitude"])
+        blocks.append((s, int(idx[-1])))
+
+        return blocks
 
     def block_path_m(g, s, e):
         if e <= s:
             return 0.0
+
         total = 0.0
+
         for i in range(s + 1, e + 1):
-            total += dist_row(g, i - 1, i)
+            d = pair_dist_m(
+                g.iloc[i - 1]["Latitude"],
+                g.iloc[i - 1]["Longitude"],
+                g.iloc[i]["Latitude"],
+                g.iloc[i]["Longitude"],
+            )
+
+            total += 0.0 if pd.isna(d) else d
+
         return float(total)
 
     def block_net_m(g, s, e):
         if e <= s:
             return 0.0
-        return float(dist_row(g, s, e))
 
-    def with_prev_stop_path(g, s, e):
-        if s - 1 >= 0 and str(g.iloc[s - 1]["state_primary"]) == "STOP":
-            return block_path_m(g, s - 1, e)
-        return block_path_m(g, s, e)
+        d = pair_dist_m(
+            g.iloc[s]["Latitude"],
+            g.iloc[s]["Longitude"],
+            g.iloc[e]["Latitude"],
+            g.iloc[e]["Longitude"],
+        )
 
-    def with_prev_stop_net(g, s, e):
-        if s - 1 >= 0 and str(g.iloc[s - 1]["state_primary"]) == "STOP":
-            return block_net_m(g, s - 1, e)
-        return block_net_m(g, s, e)
+        return 0.0 if pd.isna(d) else float(d)
 
-    def find_origin_context(g, block_s, trim_s, device_id):
-        search_s = max(0, block_s - PRE_CONTEXT_STEPS)
-        search_e = trim_s
-        last_found = None
-        for i in range(search_s, search_e + 1):
-            inside = inside_anchor_ids(g.iloc[i]["Latitude"], g.iloc[i]["Longitude"], anchor_zones, device_id)
-            if inside:
-                last_found = inside[0]
-        if last_found is None:
-            return None, None
-        return last_found[0], last_found[1]
+    def block_steps(s, e):
+        return int(e - s + 1)
 
-    def find_dest_context(g, trim_e, block_e, device_id):
-        search_s = trim_e
-        search_e = min(len(g) - 1, block_e + POST_CONTEXT_STEPS)
-        for i in range(search_s, search_e + 1):
-            inside = inside_anchor_ids(g.iloc[i]["Latitude"], g.iloc[i]["Longitude"], anchor_zones, device_id)
-            if inside:
-                return inside[0][0], inside[0][1]
-        return None, None
+    def has_stop_before_after(g, s, e):
+        before_ok = s - 1 >= 0 and is_stop(g.iloc[s - 1]["state_primary"])
+        after_ok = e + 1 < len(g) and is_stop(g.iloc[e + 1]["state_primary"])
 
-    def nearest_pre_stop(g, block_s):
-        for i in range(block_s - 1, -1, -1):
-            if str(g.iloc[i]["state_primary"]) == "STOP":
-                return i
-            if str(g.iloc[i]["state_primary"]) == "MOVE":
-                break
+        return bool(before_ok and after_ok)
+
+    # =====================================================
+    # 서버용 완료 MOVE 확인
+    # =====================================================
+    def next_non_move_idx(g, block_e):
+        next_idx = block_e + 1
+
+        if next_idx >= len(g):
+            return None
+
+        if not is_move(g.iloc[next_idx]["state_primary"]):
+            return next_idx
+
         return None
 
-    def post_stop_run(g, block_e):
-        s = block_e + 1
-        if s >= len(g) or str(g.iloc[s]["state_primary"]) != "STOP":
-            return None, None
-        e = s
-        while e + 1 < len(g) and str(g.iloc[e + 1]["state_primary"]) == "STOP":
-            e += 1
-        return s, e
+    def completed_move_duration_min(g, block_s, block_e):
+        end_context_idx = next_non_move_idx(g, block_e)
 
-    def dwell_min(g, s, e):
-        if s is None or e is None or s > e:
-            return 0.0
-        t0 = pd.to_datetime(g.iloc[s]["Timestamp"], errors="coerce")
-        t1 = pd.to_datetime(g.iloc[e]["Timestamp"], errors="coerce")
+        if end_context_idx is None:
+            return None
+
+        t0 = pd.to_datetime(g.iloc[block_s]["Timestamp"], errors="coerce")
+        t1 = pd.to_datetime(g.iloc[end_context_idx]["Timestamp"], errors="coerce")
+
         if pd.isna(t0) or pd.isna(t1):
-            return 0.0
+            return None
+
         return float((t1 - t0).total_seconds() / 60.0)
 
-    def short_trip_ok(g, block_s, block_e, device_id):
-        info = {
-            "short_disp_m": np.nan,
-            "short_path_m": np.nan,
-            "short_dwell_min": 0.0,
-            "short_pre_stop_idx": np.nan,
-            "short_post_stop_start_idx": np.nan,
-            "short_post_stop_end_idx": np.nan,
-        }
-        if block_e - block_s + 1 < 2:
-            return False, info
-        pre_idx = nearest_pre_stop(g, block_s)
-        post_s, post_e = post_stop_run(g, block_e)
-        if pre_idx is None or post_s is None:
-            return False, info
-        dm = dwell_min(g, post_s, post_e)
-        disp = dist_row(g, pre_idx, post_s)
-        path = with_prev_stop_path(g, block_s, block_e)
-        o_id, _ = find_origin_context(g, block_s, block_s, device_id)
-        d_id, _ = find_dest_context(g, block_e, block_e, device_id)
-        same_anchor = o_id is not None and d_id is not None and int(o_id) == int(d_id)
-        same_place = disp < SAME_PLACE_EPS_M
-        info.update({
-            "short_disp_m": disp,
-            "short_path_m": path,
-            "short_dwell_min": dm,
-            "short_pre_stop_idx": pre_idx,
-            "short_post_stop_start_idx": post_s,
-            "short_post_stop_end_idx": post_e,
-        })
-        if dm < SHORT_MIN_DWELL_MIN:
-            return False, info
-        if disp < SHORT_MIN_DISP_M or path < SHORT_MIN_PATH_M:
-            return False, info
-        if same_anchor or same_place:
-            return False, info
-        return True, info
+    # =====================================================
+    # baseline과 같은 origin/dest anchor 지정
+    # =====================================================
+    def assign_nearest_anchor_to_block_ends(g, block_s, block_e, anchors_norm):
+        s_lat = g.iloc[block_s]["Latitude"]
+        s_lon = g.iloc[block_s]["Longitude"]
+        e_lat = g.iloc[block_e]["Latitude"]
+        e_lon = g.iloc[block_e]["Longitude"]
 
+        origin_id, origin_dist = nearest_anchor(s_lat, s_lon, anchors_norm)
+        dest_id, dest_dist = nearest_anchor(e_lat, e_lon, anchors_norm)
+
+        return origin_id, dest_id, origin_dist, dest_dist
+
+    # =====================================================
+    # baseline과 같은 start trimming
+    # =====================================================
+    def find_trip_start_idx(g, block_s, block_e, origin_anchor):
+        """
+        baseline 코드 기준:
+        - origin anchor 밖
+        - anchor 중심에서 START_EXIT_DIST_M 이상
+        - block 시작 후 누적 이동 START_MIN_PATH_FROM_BLOCK_START_M 이상
+        - 이후 START_KEEP_MOVE_STEPS 만큼 MOVE 유지
+        """
+
+        if block_s > block_e:
+            return None
+
+        cum_path = 0.0
+        prev_lat = g.iloc[block_s]["Latitude"]
+        prev_lon = g.iloc[block_s]["Longitude"]
+
+        for i in range(block_s, block_e + 1):
+            lat = g.iloc[i]["Latitude"]
+            lon = g.iloc[i]["Longitude"]
+
+            if i > block_s:
+                step_d = pair_dist_m(prev_lat, prev_lon, lat, lon)
+                cum_path += 0.0 if pd.isna(step_d) else step_d
+                prev_lat = lat
+                prev_lon = lon
+
+            keep_move_ok = True
+
+            for k in range(START_KEEP_MOVE_STEPS):
+                j = i + k
+
+                if j > block_e or not is_move(g.iloc[j]["state_primary"]):
+                    keep_move_ok = False
+                    break
+
+            if not keep_move_ok:
+                continue
+
+            if origin_anchor is not None:
+                d_anchor = haversine_m(
+                    lat,
+                    lon,
+                    origin_anchor["anchor_lat"],
+                    origin_anchor["anchor_lon"],
+                )
+
+                outside_anchor = d_anchor > float(origin_anchor["anchor_radius_m"])
+                far_enough = d_anchor >= START_EXIT_DIST_M
+
+                if (
+                    outside_anchor
+                    and far_enough
+                    and cum_path >= START_MIN_PATH_FROM_BLOCK_START_M
+                ):
+                    return i
+
+            else:
+                if cum_path >= START_MIN_PATH_FROM_BLOCK_START_M:
+                    return i
+
+        return block_s
+
+    # =====================================================
+    # baseline과 같은 destination dwell 확인
+    # =====================================================
+    def confirm_destination_dwell(g, enter_idx, dest_anchor):
+        if dest_anchor is None:
+            return False
+
+        last_idx = min(
+            len(g) - 1,
+            enter_idx + max(END_STOP_CONFIRM_STEPS + 2, 4),
+        )
+
+        stop_count = 0
+        inside_idxs = []
+
+        speed = compute_speed_mps(g)
+
+        for i in range(enter_idx, last_idx + 1):
+            lat = g.iloc[i]["Latitude"]
+            lon = g.iloc[i]["Longitude"]
+
+            if point_inside_anchor(lat, lon, dest_anchor):
+                inside_idxs.append(i)
+
+                if is_stop(g.iloc[i]["state_primary"]):
+                    stop_count += 1
+
+        if len(inside_idxs) == 0:
+            return False
+
+        if stop_count >= END_STOP_CONFIRM_STEPS:
+            return True
+
+        mean_speed = (
+            float(speed.iloc[inside_idxs].mean())
+            if len(inside_idxs) > 0
+            else np.inf
+        )
+
+        if mean_speed <= END_LOW_SPEED_MPS:
+            return True
+
+        t = pd.to_datetime(g["Timestamp"], errors="coerce")
+
+        dwell_min = 0.0
+        if len(inside_idxs) >= 2:
+            dwell_min = (
+                t.iloc[inside_idxs[-1]] - t.iloc[inside_idxs[0]]
+            ).total_seconds() / 60.0
+
+        if dwell_min >= END_MIN_DWELL_MIN:
+            return True
+
+        return False
+
+    def find_trip_end_idx(g, block_s, block_e, dest_anchor):
+        """
+        baseline 코드 기준:
+        destination anchor에 확실히 도착하기 직전 점을 end로 사용.
+        """
+
+        if block_s > block_e:
+            return None
+
+        if dest_anchor is not None:
+            for i in range(block_s, block_e + 1):
+                lat = g.iloc[i]["Latitude"]
+                lon = g.iloc[i]["Longitude"]
+
+                if point_inside_anchor(lat, lon, dest_anchor):
+                    if confirm_destination_dwell(g, i, dest_anchor):
+                        return max(block_s, i - 1)
+
+        return block_e
+
+    # =====================================================
+    # 본 처리
+    # =====================================================
     df = df.dropna(subset=["Timestamp"]).copy()
     df = df.sort_values(["device_id", "Timestamp"]).reset_index(drop=True)
 
@@ -601,106 +987,169 @@ def extract_strict_test_trips(processed_df: pd.DataFrame, anchor_zones: pd.DataF
     trip_summary = []
 
     for device_id, group in df.groupby("device_id", sort=True):
-        g = normalize_processed_columns(group).dropna(subset=["Latitude", "Longitude"]).copy().reset_index(drop=True)
+        g = (
+            normalize_processed_columns(group)
+            .dropna(subset=["Latitude", "Longitude"])
+            .copy()
+            .reset_index(drop=True)
+        )
+
         if len(g) == 0:
             continue
 
-        blocks = contiguous_blocks(g["state_primary"].astype(str).eq("MOVE"))
+        anchors_norm = normalize_anchor_table(anchor_zones, device_id)
+
+        if anchors_norm.empty:
+            continue
+
+        move_mask = g["state_primary"].apply(is_move)
+        move_blocks = contiguous_blocks(move_mask)
+
         trip_seq = 1
 
-        for block_s, block_e in blocks:
-            raw_steps = int(block_e - block_s + 1)
-            raw_path = block_path_m(g, block_s, block_e)
-            raw_net = block_net_m(g, block_s, block_e)
-            raw_path_prev = with_prev_stop_path(g, block_s, block_e)
-            raw_net_prev = with_prev_stop_net(g, block_s, block_e)
-
-            is_long = raw_steps >= MIN_MOVE_STEPS_LOCAL and (
-                raw_net >= MIN_NET_DISP_M_LOCAL or raw_path >= MIN_PATH_LEN_M_LOCAL or
-                raw_net_prev >= MIN_NET_DISP_M_LOCAL or raw_path_prev >= MIN_PATH_LEN_M_LOCAL
-            )
-            is_short, short_info = short_trip_ok(g, block_s, block_e, device_id)
-            if not is_long and not is_short:
+        for block_s, block_e in move_blocks:
+            # sliding window가 MOVE 중간에서 시작한 경우 제외
+            if block_s == 0:
                 continue
 
-            # 기존 test 코드 정책: start는 첫 MOVE 유지, end는 block 끝 기준으로 두되 OD는 전후 문맥으로 판정
-            trim_s = block_s
-            trim_e = block_e
+            if REQUIRE_STOP_AROUND_BLOCK and not has_stop_before_after(g, block_s, block_e):
+                continue
+
+            raw_steps = block_steps(block_s, block_e)
+            raw_path_m = block_path_m(g, block_s, block_e)
+            raw_net_m = block_net_m(g, block_s, block_e)
+
+            if raw_steps < MIN_MOVE_STEPS_LOCAL:
+                continue
+
+            if raw_net_m < MIN_NET_DISP_M_LOCAL:
+                continue
+
+            if raw_path_m < MIN_PATH_LEN_M_LOCAL:
+                continue
+
+            move_duration_min = completed_move_duration_min(g, block_s, block_e)
+
+            if move_duration_min is None:
+                continue
+
+            if move_duration_min < MIN_MOVE_DURATION_MIN_LOCAL:
+                continue
+
+            origin_anchor_id, dest_anchor_id, origin_anchor_dist_m, dest_anchor_dist_m = (
+                assign_nearest_anchor_to_block_ends(
+                    g,
+                    block_s,
+                    block_e,
+                    anchors_norm,
+                )
+            )
+
+            if origin_anchor_id is None or dest_anchor_id is None:
+                continue
+
+            origin_anchor = get_anchor_by_id(origin_anchor_id, anchors_norm)
+            dest_anchor = get_anchor_by_id(dest_anchor_id, anchors_norm)
+
+            trim_s = find_trip_start_idx(
+                g,
+                block_s,
+                block_e,
+                origin_anchor,
+            )
+
+            trim_e = find_trip_end_idx(
+                g,
+                block_s,
+                block_e,
+                dest_anchor,
+            )
+
+            if trim_s is None or trim_e is None:
+                continue
+
             if trim_s >= trim_e:
                 continue
 
-            trim_steps = int(trim_e - trim_s + 1)
-            trim_path = block_path_m(g, trim_s, trim_e)
-            trim_net = block_net_m(g, trim_s, trim_e)
+            trim_steps = block_steps(trim_s, trim_e)
+            trim_path_m = block_path_m(g, trim_s, trim_e)
+            trim_net_m = block_net_m(g, trim_s, trim_e)
 
-            if is_long:
-                if trim_steps < MIN_MOVE_STEPS_LOCAL:
-                    continue
-                if trim_net < MIN_NET_DISP_M_LOCAL and trim_path < MIN_PATH_LEN_M_LOCAL:
-                    if raw_net_prev < MIN_NET_DISP_M_LOCAL and raw_path_prev < MIN_PATH_LEN_M_LOCAL:
-                        continue
-            else:
-                if trim_steps < 2:
-                    continue
+            if trim_steps < MIN_MOVE_STEPS_LOCAL:
+                continue
 
-            origin_id, origin_dist = find_origin_context(g, block_s, trim_s, device_id)
-            dest_id, dest_dist = find_dest_context(g, trim_e, block_e, device_id)
+            if trim_net_m < MIN_NET_DISP_M_LOCAL:
+                continue
+
+            if trim_path_m < MIN_PATH_LEN_M_LOCAL:
+                continue
 
             trip_id = f"{device_id}_trip{trip_seq}"
-            od_key = None
-            if origin_id is not None and dest_id is not None:
-                od_key = f"{device_id}_O{origin_id}_D{dest_id}"
+            od_key = f"{device_id}_O{origin_anchor_id}_D{dest_anchor_id}"
+
+            t0 = pd.to_datetime(g.iloc[trim_s]["Timestamp"], errors="coerce")
+            t1 = pd.to_datetime(g.iloc[trim_e]["Timestamp"], errors="coerce")
+
+            duration_min = (
+                (t1 - t0).total_seconds() / 60.0
+                if pd.notna(t0) and pd.notna(t1)
+                else np.nan
+            )
 
             sub = g.iloc[trim_s:trim_e + 1].copy().reset_index(drop=True)
+
             sub["trip_id"] = trip_id
             sub["trip_seq"] = trip_seq
             sub["od_key"] = od_key
-            sub["origin_anchor_id"] = origin_id
-            sub["dest_anchor_id"] = dest_id
-            sub["origin_anchor_dist_m"] = origin_dist
-            sub["dest_anchor_dist_m"] = dest_dist
+            sub["origin_anchor_id"] = origin_anchor_id
+            sub["dest_anchor_id"] = dest_anchor_id
+            sub["origin_anchor_dist_m"] = origin_anchor_dist_m
+            sub["dest_anchor_dist_m"] = dest_anchor_dist_m
             sub["is_test_trip"] = 1
-            sub["trip_type"] = "long_trip" if is_long else "short_trip"
+            sub["trip_type"] = "baseline_matched_trim"
+            sub["move_duration_min"] = move_duration_min
+            sub["min_move_duration_min"] = MIN_MOVE_DURATION_MIN_LOCAL
+
             trip_points.append(sub)
 
-            t0 = pd.to_datetime(sub.iloc[0]["Timestamp"], errors="coerce")
-            t1 = pd.to_datetime(sub.iloc[-1]["Timestamp"], errors="coerce")
-            duration = (t1 - t0).total_seconds() / 60.0 if pd.notna(t0) and pd.notna(t1) else np.nan
-            trip_summary.append({
-                "device_id": device_id,
-                "trip_id": trip_id,
-                "trip_seq": trip_seq,
-                "trip_type": "long_trip" if is_long else "short_trip",
-                "od_key": od_key,
-                "origin_anchor_id": origin_id,
-                "dest_anchor_id": dest_id,
-                "origin_anchor_dist_m": origin_dist,
-                "dest_anchor_dist_m": dest_dist,
-                "raw_block_start_idx": block_s,
-                "raw_block_end_idx": block_e,
-                "trim_start_idx": trim_s,
-                "trim_end_idx": trim_e,
-                "raw_steps": raw_steps,
-                "raw_path_m": raw_path,
-                "raw_net_m": raw_net,
-                "raw_path_with_prev_stop_m": raw_path_prev,
-                "raw_net_with_prev_stop_m": raw_net_prev,
-                "trim_steps": trim_steps,
-                "trim_path_m": trim_path,
-                "trim_net_m": trim_net,
-                "short_pre_stop_idx": short_info.get("short_pre_stop_idx", np.nan),
-                "short_post_stop_start_idx": short_info.get("short_post_stop_start_idx", np.nan),
-                "short_post_stop_end_idx": short_info.get("short_post_stop_end_idx", np.nan),
-                "short_disp_m": short_info.get("short_disp_m", np.nan),
-                "short_path_m": short_info.get("short_path_m", np.nan),
-                "short_dwell_min": short_info.get("short_dwell_min", np.nan),
-                "start_time": t0,
-                "end_time": t1,
-                "duration_min": duration,
-                "n_points": len(sub),
-            })
+            trip_summary.append(
+                {
+                    "device_id": device_id,
+                    "trip_id": trip_id,
+                    "trip_seq": trip_seq,
+                    "trip_type": "baseline_matched_trim",
+                    "od_key": od_key,
+                    "origin_anchor_id": origin_anchor_id,
+                    "dest_anchor_id": dest_anchor_id,
+                    "origin_anchor_dist_m": origin_anchor_dist_m,
+                    "dest_anchor_dist_m": dest_anchor_dist_m,
+                    "raw_block_start_idx": block_s,
+                    "raw_block_end_idx": block_e,
+                    "trim_start_idx": trim_s,
+                    "trim_end_idx": trim_e,
+                    "raw_steps": raw_steps,
+                    "raw_path_m": raw_path_m,
+                    "raw_net_m": raw_net_m,
+                    "trim_steps": trim_steps,
+                    "trim_path_m": trim_path_m,
+                    "trim_net_m": trim_net_m,
+                    "move_duration_min": move_duration_min,
+                    "min_move_duration_min": MIN_MOVE_DURATION_MIN_LOCAL,
+                    "start_time": t0,
+                    "end_time": t1,
+                    "duration_min": duration_min,
+                    "n_points": len(sub),
+                }
+            )
+
             trip_seq += 1
 
-    trip_points_df = pd.concat(trip_points, ignore_index=True, sort=False) if trip_points else pd.DataFrame()
+    trip_points_df = (
+        pd.concat(trip_points, ignore_index=True, sort=False)
+        if trip_points
+        else pd.DataFrame()
+    )
+
     trip_summary_df = pd.DataFrame(trip_summary)
+
     return trip_points_df, trip_summary_df

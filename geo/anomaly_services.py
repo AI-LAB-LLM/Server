@@ -313,6 +313,13 @@ def run_anomaly_for_latest(geo_obj, minutes=180):
             "reason": "no_move_state",
         }
 
+    # 현재 이동 중이면 목적지 앵커를 알 수 없으므로 trip 완료 후(STOP) 실행
+    if str(geo_obj.state_primary) == "MOVE":
+        return {
+            "anomaly_status": "skipped",
+            "reason": "trip_in_progress",
+        }
+
     try:
         anomaly = AnomalyRuntime(str(ANOMALY_MODEL_PATH))
         result_df = anomaly.predict_from_processed_gps(processed_df)

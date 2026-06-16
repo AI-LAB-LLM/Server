@@ -21,7 +21,7 @@ def _norm(raw: str) -> str:
         cleaned = cleaned[-16:]
     return cleaned
 
-
+# 그 장치의 가장 최근 세션을 가져오거나, 없으면 새로 만듦 
 def _get_or_create_session(device_id: str) -> ApneaSession:
     session = (ApneaSession.objects
                .filter(device_id=device_id)
@@ -64,8 +64,17 @@ class IngestView(View):
         except Exception:
             timestamp = datetime.now(timezone.utc)
 
-        session = _get_or_create_session(device_id)
+        
         engine  = ApneaEngine.get_instance()
+        session_pk = engine._session_pk.get(device_id)
+        if session_pk:
+            try:
+                session = ApneaSession.objects.get(pk=session_pk)
+            except ApneaSession.DoesNotExist:
+                session = None          # ← 옛 세션 끌어오지 않음
+        else:
+            session = None             # ← _get_or_create_session 호출 제거
+
         result  = engine.process_chunk(
             device_id, ppg_green,
             ppg_ir=ppg_ir, ppg_red=ppg_red,
@@ -137,7 +146,7 @@ class BaselineStartView(View):
             started_at     = started_at,
             baseline_ready = False,
         )
-        ApneaEngine.get_instance().start_session(device_id)
+        ApneaEngine.get_instance().start_session(device_id, session_pk=session.pk)
 
         return JsonResponse({
             "ok":         True,

@@ -82,8 +82,8 @@ export function renderIrHolding() {
   const bands  = [];
   for (const pt of bufFull) {
     const y = Number(pt.y);
-    if (pt.valid !== true) bands.push(pt.x);
-    if (Number.isFinite(y) && y > thrBase) hotIdx.push(pt.x);
+    if (pt.valid !== true || pt.wear_valid !== true ) {bands.push(pt.x);
+    }else if (Number.isFinite(y) && y > thrBase) {hotIdx.push(pt.x);}
   }
 
   const dataSeries = [
@@ -137,7 +137,7 @@ export function renderIrHolding() {
         shared: true,
         content: function(e) {
           const x  = e.entries?.[0]?.dataPoint?.x;
-          const pt = bufFull.find(b => b.x === x);
+          const pt = bufFull.find(b => Math.abs(b.x - x) < 0.01);         
           const p  = (pt?.y != null) ? Number(pt.y).toFixed(3) : '-';
           const t  = thrBase.toFixed(2);
           const v  = (pt?.valid === true) ? 'ok' : 'baseline/warming-up';
