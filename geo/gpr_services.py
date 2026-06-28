@@ -15,8 +15,8 @@ from .anomaly_services import run_anomaly_for_latest
 
 # GEO 모델 설정
 # 현재 모델 파일은 이 device_id 전용임
-GEO_MODEL_DEVICE_ID = "19395f6a434f4ca6"
-GPR_VERSION = "0521"
+GEO_MODEL_DEVICE_ID = "212e15388f880450"
+GPR_VERSION = "0612"
 
 GEO_MODEL_DIR = (
     Path(settings.BASE_DIR)

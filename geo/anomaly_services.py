@@ -20,8 +20,8 @@ from .anomaly_runtime import AnomalyRuntime
 # =========================
 
 # 현재 anomaly 모델도 특정 device_id 전용
-GEO_MODEL_DEVICE_ID = "19395f6a434f4ca6"
-ANOMALY_VERSION = "0427"
+GEO_MODEL_DEVICE_ID = "212e15388f880450"
+ANOMALY_VERSION = "0615"
 
 GEO_MODEL_DIR = (
     Path(settings.BASE_DIR)

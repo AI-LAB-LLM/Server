@@ -11,7 +11,7 @@ from geo.gpr_services import run_gpr_and_update_latest
 from geo.anomaly_services import run_anomaly_for_latest
 
 
-MODEL_DEVICE_ID = "19395f6a434f4ca6"
+MODEL_DEVICE_ID = "212e15388f880450"
 
 
 def parse_float_or_none(value):
@@ -71,11 +71,11 @@ def parse_timestamp(value):
 class Command(BaseCommand):
     help = "Read timestamp, latitude, longitude from test_skt.csv and run GPR like live GPS input."
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser):  
         parser.add_argument(
             "--csv-path",
             type=str,
-            default="geo/management/commands/SKT_test.csv",
+            default="geo/management/commands/SKT_0619_e.csv",
             help="CSV file path.",
         )
 
