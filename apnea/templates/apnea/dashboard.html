@@ -12,6 +12,41 @@
 <div id="wearOverlay" class="wear-overlay"></div>
 
 <div id="appRoot">
+<div id="sosBanner" class="sos-banner" role="alert" hidden>
+
+  <div class="sos-icon" aria-hidden="true">🚨</div>
+
+  <div class="sos-badge">SOS</div>
+
+  <div class="sos-basis">
+    <div class="sos-label">판단 근거</div>
+
+    <div id="sosBasisMain" class="sos-basis__main">
+      -
+    </div>
+
+    <div id="sosBasisSub" class="sos-basis__sub"></div>
+  </div>
+
+  <div class="sos-stat">
+    <div class="sos-label">발생 시각</div>
+    <div id="sosOccurred" class="sos-stat__value">
+      --:--:--
+    </div>
+  </div>
+
+  <div class="sos-stat">
+    <div class="sos-label">경과 시간</div>
+    <div id="sosElapsed" class="sos-stat__value">
+      00:00
+    </div>
+  </div>
+
+  <button id="sosCloseBtn" class="sos-close" type="button">
+    ✓ 사건 종결
+  </button>
+
+</div>
 
   <header class="header">
     <h1>Apnea Detection Monitor</h1>

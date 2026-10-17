@@ -36,4 +36,60 @@ export async function fetchModelStatus() {
   return res.json();
 }
 
+export async function fetchBaselines(deviceId) {
+    const params = new URLSearchParams();
 
+    params.set('device_id', deviceId);
+    params.set('t', Date.now().toString());
+
+    const res = await fetch(
+        `/apnea/api/baselines/?${params.toString()}`,
+        {
+            cache: 'no-store',
+        }
+    );
+
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+        throw new Error(
+            data?.error ||
+            `baseline list failed: ${res.status}`
+        );
+    }
+
+    return data;
+}
+
+
+export async function selectBaseline(
+    deviceId,
+    sessionId
+) {
+    const res = await fetch(
+        '/apnea/api/baselines/select/',
+        {
+            method: 'POST',
+
+            headers: {
+                'Content-Type': 'application/json',
+            },
+
+            body: JSON.stringify({
+                device_id: deviceId,
+                session_id: sessionId,
+            }),
+        }
+    );
+
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+        throw new Error(
+            data?.error ||
+            `baseline select failed: ${res.status}`
+        );
+    }
+
+    return data;
+}

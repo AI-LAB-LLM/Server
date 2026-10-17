@@ -379,4 +379,528 @@ html, body {
   font-size: 13px;
 }
 
+/* =========================================================
+   Baseline 선택 패널
+   ========================================================= */
 
+.baseline-section {
+    /* grid-left 안에서 고정 영역으로 사용 */
+    flex: 0 0 auto;
+
+    padding: 12px 14px;
+
+    box-sizing: border-box;
+
+    /* 목록이 많아져도 패널 전체가 무한히 커지지 않도록 */
+    max-height: 220px;
+
+    display: flex;
+    flex-direction: column;
+
+    min-height: 0;
+}
+
+
+/* ─────────────────────────────────────
+   상단 제목
+   ───────────────────────────────────── */
+
+.baseline-header {
+    flex: 0 0 auto;
+
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: 12px;
+
+    margin-bottom: 9px;
+}
+
+
+.baseline-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #374151;
+
+    line-height: 1.3;
+}
+
+
+.baseline-subtitle {
+    margin-top: 2px;
+
+    font-size: 10px;
+    font-weight: 400;
+    color: #9ca3af;
+
+    line-height: 1.3;
+}
+
+
+.baseline-current-label {
+    flex: 0 0 auto;
+
+    padding: 3px 7px;
+
+    border-radius: 999px;
+
+    background: #f3f4f6;
+
+    font-size: 9px;
+    font-weight: 700;
+    color: #6b7280;
+
+    letter-spacing: 0.4px;
+}
+
+
+/* =========================================================
+   Baseline 목록
+   ========================================================= */
+
+.baseline-list {
+    /*
+      핵심:
+      목록이 많아지면 이 영역만 스크롤됨
+    */
+    flex: 1;
+
+    min-height: 0;
+
+    max-height: 155px;
+
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    display: flex;
+    flex-direction: column;
+
+    gap: 5px;
+
+    padding-right: 4px;
+}
+
+
+/* =========================================================
+   각각의 Baseline 항목
+   ========================================================= */
+
+.baseline-item {
+    flex: 0 0 auto;
+
+    width: 100%;
+
+    display: flex;
+    align-items: center;
+
+    gap: 9px;
+
+    padding: 8px 10px;
+
+    box-sizing: border-box;
+
+    background: #ffffff;
+
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+
+    text-align: left;
+
+    cursor: pointer;
+
+    transition:
+        background 0.15s ease,
+        border-color 0.15s ease,
+        box-shadow 0.15s ease;
+}
+
+
+.baseline-item:hover {
+    background: #f9fafb;
+    border-color: #d1d5db;
+}
+
+
+/* 현재 선택된 Baseline */
+.baseline-item--selected {
+    background: #f0fdf4;
+
+    border-color: #10b981;
+
+    box-shadow:
+        inset 0 0 0 1px #10b981;
+}
+
+
+/* 선택된 항목 hover */
+.baseline-item--selected:hover {
+    background: #ecfdf5;
+}
+
+
+/* =========================================================
+   ○ / ●
+   ========================================================= */
+
+.baseline-radio {
+    flex: 0 0 auto;
+
+    width: 18px;
+
+    text-align: center;
+
+    font-size: 17px;
+    line-height: 1;
+
+    color: #9ca3af;
+}
+
+
+.baseline-item--selected .baseline-radio {
+    color: #10b981;
+}
+
+
+/* =========================================================
+   시간 + 상세 정보
+   ========================================================= */
+
+.baseline-info {
+    flex: 1;
+
+    min-width: 0;
+
+    display: flex;
+    flex-direction: column;
+
+    gap: 2px;
+}
+
+
+.baseline-time {
+    overflow: hidden;
+
+    font-size: 12px;
+    font-weight: 650;
+
+    color: #374151;
+
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+
+.baseline-detail {
+    overflow: hidden;
+
+    font-size: 9px;
+    font-weight: 400;
+
+    color: #9ca3af;
+
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+
+/* 선택된 baseline의 설명 */
+.baseline-item--selected .baseline-detail {
+    color: #059669;
+    font-weight: 600;
+}
+
+
+/* =========================================================
+   데이터 없음 / 로딩
+   ========================================================= */
+
+.baseline-empty {
+    display: flex;
+
+    align-items: center;
+    justify-content: center;
+
+    min-height: 55px;
+
+    padding: 10px;
+
+    box-sizing: border-box;
+
+    font-size: 10px;
+
+    color: #9ca3af;
+
+    text-align: center;
+}
+
+
+/* =========================================================
+   Scrollbar
+   ========================================================= */
+
+.baseline-list::-webkit-scrollbar {
+    width: 5px;
+}
+
+
+.baseline-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+
+.baseline-list::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+
+    border-radius: 999px;
+}
+
+
+.baseline-list::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+}
+
+/* ================================
+   IMU 위험도 카드
+   ================================ */
+
+#imuCard {
+  min-height: 330px;
+  padding: 20px 24px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .08);
+}
+
+.imu-main {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin: 18px 0;
+}
+
+#imuTile {
+  width: 120px;
+  height: 120px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+#imuTileNum {
+  font-size: 52px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+#imuTileLabel {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#imuScale {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+#imuScale .imu-scale__item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+#imuScale .imu-scale__chip {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: #d1d5db;
+}
+
+#imuScale .imu-scale__item.is-active {
+  color: #111827;
+  font-weight: 700;
+}
+
+#imuScale .imu-scale__item.is-active .imu-scale__chip {
+  background: #f97316;
+}
+
+
+#imuDesc {
+  margin-top: 12px;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+#imuTs {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* 최근 3분 IMU 막대그래프 */
+
+
+#imuBars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 110px;
+  padding: 10px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+#imuBars .imu-bar {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+
+#imuBars .imu-bar__fill {
+  display: block;
+  width: 100%;
+  height: 0;
+  border-radius: 3px 3px 0 0;
+  background: #d1d5db;
+  transition: height 0.25s ease;
+}
+
+#imuBars .imu-bar[data-level="1"] .imu-bar__fill {
+  background: #22c55e;
+}
+
+#imuBars .imu-bar[data-level="2"] .imu-bar__fill {
+  background: #84cc16;
+}
+
+#imuBars .imu-bar[data-level="3"] .imu-bar__fill {
+  background: #f59e0b;
+}
+
+#imuBars .imu-bar[data-level="4"] .imu-bar__fill {
+  background: #f97316;
+}
+
+#imuBars .imu-bar[data-level="5"] .imu-bar__fill {
+  background: #ef4444;
+}
+
+#imuBars .imu-bar.is-empty .imu-bar__fill {
+  height: 0 !important;
+}
+
+
+
+/* 위험도별 큰 타일 색상 */
+
+#imuTile.level-1 { background: #dcfce7; color: #15803d; }
+#imuTile.level-2 { background: #ecfccb; color: #4d7c0f; }
+#imuTile.level-3 { background: #fef3c7; color: #b45309; }
+#imuTile.level-4 { background: #ffedd5; color: #c2410c; }
+#imuTile.level-5 { background: #fee2e2; color: #b91c1c; }
+
+/* IMU 아래 Baseline + 착용 카드 */
+
+.bottom-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+/* 기존의 착용 카드 최소 높이 620px 덮어쓰기 */
+.bottom-row #wearCard {
+  min-height: 260px;
+  height: auto;
+  padding: 16px;
+}
+
+.bottom-row #wearCard .wear-card__top {
+  padding-top: 8px;
+}
+
+.bottom-row #wearCard .wear-card__status {
+  font-size: 32px;
+}
+
+.bottom-row #wearCard .wear-card__bottom > img {
+  max-height: 150px;
+}
+
+/* Baseline + 착용 여부 카드 */
+
+.bottom-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 1fr);
+    gap: 12px;
+    align-items: stretch;
+    min-width: 0;
+}
+
+/* 착용 여부 카드: 기존 높이 유지 */
+.bottom-row #wearCard {
+    height: auto;
+    min-height: 260px;
+    max-height: none;
+}
+
+/* Baseline 카드: Grid 높이 안에서만 표시 */
+.bottom-row .baseline-section {
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 12px;
+    box-sizing: border-box;
+}
+
+/* 제목 고정 */
+.bottom-row .baseline-header {
+    flex: 0 0 auto;
+}
+
+/* 목록만 내부 스크롤 */
+.bottom-row .baseline-list {
+    flex: 1 1 0;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+}
+
+/* 목록 항목 높이 유지 */
+.bottom-row .baseline-item {
+    flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+    .grid-split {
+        grid-template-columns: 1fr;
+    }
+
+    .bottom-row {
+        grid-template-columns: 1fr;
+    }
+
+    .imu-main {
+        flex-wrap: wrap;
+    }
+}

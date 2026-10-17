@@ -7,6 +7,12 @@ const WINDOW_SEC = 240;
 const APNEA_THR_CONST = 0.5;  // 기본 임계값 (모델 config에서 덮어씀)
 window.IR_MAX_CHUNKS ??= 120;
 
+// irHolding 차트의 tooltip content 함수가 참조하는 "최신 데이터" 레퍼런스.
+// 차트는 최초 1번만 생성되므로, 함수 안에서 지역변수 bufFull을 그대로 클로저로
+// 캡처하면 이후 새로 들어오는 데이터를 못 보고 옛 스냅샷만 계속 찾게 된다.
+// 그래서 매 렌더링마다 이 모듈 스코프 변수를 갱신해 tooltip이 항상 최신 값을 보게 한다.
+let irTooltipBuf = [];
+
 
 export function renderRratio() {
   const cont = document.getElementById('ppgRratio');
@@ -61,6 +67,8 @@ export function renderIrHolding() {
     if (elMeta) elMeta.textContent = 'No apnea predictions yet. Waiting for baseline...';
     return;
   }
+
+  irTooltipBuf = bufFull; // tooltip이 매 렌더링마다 최신 데이터를 보도록 갱신
 
   // x축 0~600 고정
 // x축: 최신 time_sec 기준으로 600초 슬라이딩
@@ -137,12 +145,13 @@ export function renderIrHolding() {
         shared: true,
         content: function(e) {
           const x  = e.entries?.[0]?.dataPoint?.x;
-          const pt = bufFull.find(b => Math.abs(b.x - x) < 0.01);         
+          const pt = irTooltipBuf.find(b => Math.abs(b.x - x) < 0.01);
           const p  = (pt?.y != null) ? Number(pt.y).toFixed(3) : '-';
           const t  = thrBase.toFixed(2);
           const v  = (pt?.valid === true) ? 'ok' : 'baseline/warming-up';
           const lb = (pt?.label != null) ? Number(pt.label) : '-';
-          return `<b>${x?.toFixed(1)}s</b><br>p(apnea)=${p} / thr=${t} / label=${lb} / ${v}`;
+          const ts = pt?.ts ? new Date(pt.ts).toLocaleString() : '-';
+          return `<b>${x?.toFixed(1)}s</b> (${ts})<br>p(apnea)=${p} / thr=${t} / label=${lb} / ${v}`;
         }
       },
       legend: { verticalAlign: 'bottom' }

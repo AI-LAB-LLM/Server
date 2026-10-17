@@ -1,40 +1,14 @@
 import { setItems, appendRFromItems, appendIrFromItems, resetIrbuf } from './state.js';
-import { fetchRecordsWithPulses, startBaselineSession, fetchModelStatus } from './api.js';
+import { fetchRecordsWithPulses, startBaselineSession, fetchModelStatus,fetchBaselines, selectBaseline, } from './api.js';
 import { renderRratio, renderIrHolding, renderWearStatus } from './charts.js';
+import { startImuMonitor } from './imu.js';
+import { startSosMonitor } from './sos.js';
 
 let isFetching = false;
 const POLL_MS   = 4000;
 const DEVICE_ID = window.DASH_DEVICE_ID || null;
 
-// ── 카카오맵 ──────────────────────────────────
-let kmap = null, kmarker = null;
 
-function isValidKoreaLatLon(lat, lon) {
-  return Number.isFinite(lat) && Number.isFinite(lon) &&
-         lat >= 33 && lat <= 39 && lon >= 124 && lon <= 132;
-}
-
-function ensureKakaoMap(lat, lon) {
-  if (!window.kakao || !window.kakao.maps) return;
-  const y = Number(lat), x = Number(lon);
-  const useLat = isValidKoreaLatLon(y, x) ? y : 37.5665;
-  const useLon = isValidKoreaLatLon(y, x) ? x : 126.9780;
-
-  if (!kmap) {
-    window.kakao.maps.load(() => {
-      const container = document.getElementById('map');
-      if (!container) return;
-      const center = new kakao.maps.LatLng(useLat, useLon);
-      kmap    = new kakao.maps.Map(container, { center, level: 3 });
-      kmarker = new kakao.maps.Marker({ position: center });
-      kmarker.setMap(kmap);
-    });
-    return;
-  }
-  const pos = new kakao.maps.LatLng(useLat, useLon);
-  kmap.setCenter(pos);
-  if (kmarker) kmarker.setPosition(pos);
-}
 
 // ── KPI ───────────────────────────────────────
 function updateKpi(items) {
@@ -52,13 +26,20 @@ function updateKpi(items) {
     return;
   }
 
-  const baselineCount = items.filter(it =>
-    it.is_baseline &&
-    new Date(it.timestamp) >= window.__sessionStartTime
-  ).length;
-  elBsl.textContent = `⏳ ${baselineCount} / 8 chunks`;
-}
+//   const baselineCount = items.filter(it =>
+//     it.is_baseline &&
+//     new Date(it.timestamp) >= window.__sessionStartTime
+//   ).length;
+//   elBsl.textContent = `⏳ ${baselineCount} / 8 chunks`;
+// }
 
+  const elapsedSec = Math.min(
+      30,
+      Math.floor((Date.now() - window.__sessionStartTime.getTime()) / 1000)
+  );
+
+  elBsl.textContent = `⏳ ${elapsedSec} / 30초`;
+}
 // ── IMU ───────────────────────────────────────
 function updateImu(st) {
   const imuEl    = document.getElementById('imuLevelText');
@@ -103,11 +84,22 @@ window.openBaselinePopup = function(totalSec) {
     bar.style.width = pct + '%';
     counter.textContent = `${Math.round(elapsed)}s / ${totalSec}s`;
 
-    if (elapsed >= totalSec) {
-      clearInterval(iv);
-      status.textContent = 'Baseline Complete';
-      text.textContent   = 'Starting inference...';
-      setTimeout(() => closePopup(), 2000);
+  if (elapsed >= totalSec) {
+    clearInterval(iv);
+
+    status.textContent = 'Baseline Complete';
+    text.textContent = 'Starting inference...';
+
+    setTimeout(() => {
+      closePopup();
+
+      // 서버에서 baseline 저장이 끝날 시간을 조금 기다렸다가
+      // 목록을 다시 가져온다.
+      setTimeout(() => {
+        loadBaselineList();
+      }, 3000);
+
+    }, 2000);
     }
   }, 500);
 
@@ -120,6 +112,201 @@ window.openBaselinePopup = function(totalSec) {
 
   closeBtn?.addEventListener('click', closePopup, { once: true });
   overlay?.addEventListener('click', closePopup, { once: true });
+}
+
+function formatBaselineTime(iso) {
+    const d = new Date(iso);
+
+    return new Intl.DateTimeFormat(
+        'ko-KR',
+        {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        }
+    ).format(d);
+}
+
+
+async function loadBaselineList() {
+    const listEl =
+        document.getElementById('baselineList');
+
+    if (!listEl || !DEVICE_ID) {
+        return;
+    }
+
+    try {
+        const data =
+            await fetchBaselines(DEVICE_ID);
+
+        renderBaselineList(
+            data.items || []
+        );
+
+    } catch (e) {
+        console.error(
+            '[baseline] list failed',
+            e
+        );
+
+        listEl.innerHTML = `
+            <div class="baseline-empty">
+                베이스라인 목록을
+                불러오지 못했습니다.
+            </div>
+        `;
+    }
+}
+
+
+function renderBaselineList(items) {
+    const listEl =
+        document.getElementById('baselineList');
+
+    if (!listEl) {
+        return;
+    }
+
+    listEl.innerHTML = '';
+
+    if (!items.length) {
+        listEl.innerHTML = `
+            <div class="baseline-empty">
+                저장된 베이스라인이 없습니다.
+            </div>
+        `;
+
+        return;
+    }
+
+    for (const item of items) {
+
+        const row =
+            document.createElement('button');
+
+        row.type = 'button';
+
+        row.className =
+            'baseline-item' +
+            (
+                item.selected
+                    ? ' baseline-item--selected'
+                    : ''
+            );
+
+        // 동그라미
+        const radio =
+            document.createElement('span');
+
+        radio.className = 'baseline-radio';
+
+        radio.textContent =
+            item.selected ? '●' : '○';
+
+
+        // 오른쪽 정보
+        const info =
+            document.createElement('span');
+
+        info.className = 'baseline-info';
+
+
+        const time =
+            document.createElement('span');
+
+        time.className = 'baseline-time';
+
+        time.textContent =
+            formatBaselineTime(
+                item.measured_at
+            );
+
+
+        const detail =
+            document.createElement('span');
+
+        detail.className =
+            'baseline-detail';
+
+        if (item.selected) {
+            detail.textContent =
+                '현재 추론에 사용 중';
+
+        } else if (
+            item.num_beats != null
+        ) {
+            detail.textContent =
+                `${item.num_beats} beats`;
+
+        } else {
+            detail.textContent = '';
+        }
+
+
+        info.appendChild(time);
+        info.appendChild(detail);
+
+        row.appendChild(radio);
+        row.appendChild(info);
+
+
+        row.addEventListener(
+            'click',
+            async () => {
+
+                if (item.selected) {
+                    return;
+                }
+
+                const ok = window.confirm(
+                    `${formatBaselineTime(
+                        item.measured_at
+                    )} 베이스라인으로 변경할까요?`
+                );
+
+                if (!ok) {
+                    return;
+                }
+
+                try {
+                    row.disabled = true;
+
+                    await selectBaseline(
+                        DEVICE_ID,
+                        item.session_id
+                    );
+
+                    console.log(
+                        '[baseline] changed:',
+                        item.session_id
+                    );
+
+                    // 목록 다시 받아서
+                    // ● 표시 변경
+                    await loadBaselineList();
+
+                } catch (e) {
+
+                    console.error(
+                        '[baseline] select failed',
+                        e
+                    );
+
+                    alert(
+                        '베이스라인 변경에 실패했습니다.'
+                    );
+
+                    row.disabled = false;
+                }
+            }
+        );
+
+        listEl.appendChild(row);
+    }
 }
 
 // ── 메인 폴링 ─────────────────────────────────
@@ -137,17 +324,7 @@ async function fetchAndRender() {
     updateKpi(items);
     updateDelay(items);
 
-    if (DEVICE_ID) {
-      const res = await fetch(
-        `/apnea/api/event_status/?device_id=${encodeURIComponent(DEVICE_ID)}&t=${Date.now()}`,
-        { cache: 'no-store' }
-      );
-      if (res.ok) {
-        const st = await res.json();
-        updateImu(st);
-        ensureKakaoMap(st.latitude, st.longitude);
-      }
-    }
+
   } catch (e) {
     console.error('fetchAndRender error:', e);
   } finally {
@@ -163,7 +340,8 @@ async function fetchAndRender() {
     if (thr && Number.isFinite(thr)) window.__apneaThr = thr;
   } catch (e) {}
 
-  ensureKakaoMap(null, null);
+
+  await loadBaselineList();
 
   const btn = document.getElementById('btnStartNew');
   btn?.addEventListener('click', async () => {
@@ -172,7 +350,7 @@ async function fetchAndRender() {
     await startBaselineSession(deviceId, Date.now());
     window.__sessionStartTime = new Date();
     resetIrbuf();        // ← IRBUF 리셋
-    openBaselinePopup(96);
+    window.openBaselinePopup(30);
   } catch (e) {
     console.warn('[baseline] start failed', e);
   }
@@ -187,6 +365,9 @@ async function fetchAndRender() {
   renderWearStatus();
   updateKpi(INIT);
   updateDelay(INIT);
+
+  startImuMonitor(DEVICE_ID);
+  startSosMonitor(DEVICE_ID);
 
   if (!window.__devicePollStarted) {
     window.__devicePollStarted = true;

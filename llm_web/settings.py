@@ -29,7 +29,8 @@ environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 
 SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1", "localhost","210.125.91.90"])
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1", "localhost","210.125.91.90", "210.125.96.132","*"])
+CSRF_TRUSTED_ORIGINS = ['https://*.ngrok-free.app']
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -145,4 +146,3 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
-KAKAO_JS_KEY = os.getenv("KAKAO_JS_KEY", "")

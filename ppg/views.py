@@ -26,6 +26,5 @@ def dashboard_device_view(request, device_id: str):
             "items": items,
             "device_id": device_id,
             "protectee_name": protectee.name,
-            "KAKAO_JS_KEY": settings.KAKAO_JS_KEY,
         },
     )

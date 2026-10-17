@@ -65,7 +65,6 @@
     }
   </style>
 
-    <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={{ KAKAO_JS_KEY|cut:' ' }}&autoload=false"></script>
 
 </head>
 
@@ -114,40 +113,8 @@
           </div>
         </div>
 
-        <!-- 지도 섹션 -->
-        <div class="map-title">현재 위치</div>
-        <div id="map"></div>
+  
 
-        <script>
-        (function () {
-            function init() {
-            if (!window.kakao || !window.kakao.maps) {
-                console.error("[map] Kakao SDK not loaded");
-                document.getElementById("map").innerHTML =
-                "<div style='padding:12px;color:#6b7280;'>Kakao SDK가 로드되지 않았습니다.</div>";
-                return;
-            }
-
-            window.kakao.maps.load(function () {
-                var container = document.getElementById("map");
-                if (!container) return;
-
-                var center = new kakao.maps.LatLng(37.5665, 126.9780); // 서울시청
-                var map = new kakao.maps.Map(container, { center: center, level: 3 });
-                var marker = new kakao.maps.Marker({ position: center });
-                marker.setMap(map);
-
-                console.log("[map] Kakao map rendered OK");
-            });
-            }
-
-            // DOM이 다 그려진 다음 실행
-            if (document.readyState === "loading") {
-            document.addEventListener("DOMContentLoaded", init);
-            } else {
-            init();
-            }
-        })();
         </script>
 
       </div>
@@ -175,9 +142,6 @@
       window.DASH_DEVICE_ID = "{{ device_id|escapejs }}";
       window.DASH_USER_NAME = "{{ protectee_name|escapejs }}";
 
-      // ✅ 지도 기본 위치 (한국/서울)
-      window.MAP_DEFAULT_CENTER = { lat: 37.5665, lon: 126.9780 }; // Seoul City Hall
-      window.MAP_DEFAULT_ZOOM = 13;
     </script>
 
     <script src="{% static 'js/state.js' %}" type="module"></script>

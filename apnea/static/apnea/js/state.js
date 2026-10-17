@@ -81,7 +81,6 @@ export function resetIrbuf() {
   IRBUF_LAST_TS = null;
   IRBUF_LAST_SIG = null;
 }
-
 export function appendIrFromItems(items) {
   const rows = Array.isArray(items) ? items : [];
   if (!rows.length) return;
@@ -96,6 +95,9 @@ export function appendIrFromItems(items) {
     const pred = r?.predictions?.APNEA_RESULT;
 
     if (Array.isArray(beatResults) && beatResults.length > 0 && pred) {
+      const chunkTs = r?.timestamp ? new Date(r.timestamp).getTime() : null;
+      const anchorTimeSec = Number(beatResults[0]?.time_sec);
+
       for (const beat of beatResults) {
         const timeSec = beat?.time_sec;
         const prob    = beat?.p_apnea_smooth;
@@ -112,11 +114,15 @@ export function appendIrFromItems(items) {
           IRBUF.length = 0;
         }
 
+        const ts = (chunkTs != null && Number.isFinite(anchorTimeSec))
+          ? chunkTs + (x - anchorTimeSec) * 1000
+          : (r?.timestamp ?? null);
+
         IRBUF.push({
           x,
           y: (prob != null && Number.isFinite(Number(prob))) ? Number(prob) : null,
           valid,
-          ts: r?.timestamp ?? null,
+          ts,
           thr: null,
           label,
           wear_valid: r?.predictions?.WEAR_GREEN?.valid,

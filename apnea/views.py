@@ -9,7 +9,8 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
 from .apnea_engine import ApneaEngine, BASELINE_PACKETS
-from .models import ApneaChunk, ApneaSession
+from .models import ApneaChunk, ApneaSession, ApneaDeviceConfig
+
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,10 @@ class IngestView(View):
             wear_label     = wear.get("label"),
             wear_prob      = wear.get("prob"),
             r_ratio_series = result.get("r_ratio_series"),
-            is_baseline    = (result["phase"] == "baseline"),
+            is_baseline=result.get(
+                "is_baseline",
+                False,
+            ),            
             beat_results   = result.get("beat_results") or None,
             p_apnea        = result.get("p_apnea"),
             p_apnea_smooth = result.get("p_apnea_smooth"),
@@ -104,6 +108,28 @@ class IngestView(View):
             pred_status    = result.get("pred_status"),
             received_at    = received_at,
         )
+
+        # PPG 데이터 저장 후 SOS 판정
+        from .sos_services import check_and_create_sos
+
+        try:
+            incident = check_and_create_sos(device_id)
+
+            if incident is not None:
+                logger.info(
+                    "[SOS] device=%s incident=%s rule=%s",
+                    device_id,
+                    incident.id,
+                    incident.rule,
+                )
+
+        except Exception:
+            logger.exception(
+                "[SOS] 판정 실패 device=%s",
+                device_id,
+            )
+
+        # 기존 전송 지연 계산 코드
         try:
             watch_end_time = timestamp + __import__('datetime').timedelta(seconds=12)
             network_delay = (received_at - watch_end_time).total_seconds()
@@ -155,6 +181,157 @@ class BaselineStartView(View):
             "started_at": started_at.isoformat(),
         })
 
+class BaselineListView(View):
+    def get(self, request):
+        device_id = _norm(
+            request.GET.get("device_id", "")
+        )
+
+        if not device_id:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "device_id is required",
+                },
+                status=400,
+            )
+
+        # 기존 ApneaSession에서 baseline 완료된 것만 가져옴
+        sessions = (
+            ApneaSession.objects
+            .filter(
+                device_id=device_id,
+                baseline_ready=True,
+                baseline_stats__isnull=False,
+            )
+            .order_by("-started_at")
+        )
+
+        config = (
+            ApneaDeviceConfig.objects
+            .filter(device_id=device_id)
+            .first()
+        )
+
+        selected_session_id = (
+            config.selected_baseline_session_id
+            if config
+            else None
+        )
+
+        items = []
+
+        for session in sessions:
+            stats = session.baseline_stats or {}
+
+            items.append({
+                "session_id": session.pk,
+                "measured_at": session.started_at.isoformat(),
+                "num_beats": stats.get("num_beats"),
+                "selected": (
+                    session.pk == selected_session_id
+                ),
+            })
+
+        return JsonResponse({
+            "ok": True,
+            "device_id": device_id,
+            "selected_session_id": selected_session_id,
+            "items": items,
+        })
+
+@method_decorator(csrf_exempt, name="dispatch")
+class BaselineSelectView(View):
+    def post(self, request):
+        try:
+            body = json.loads(request.body)
+        except Exception:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "invalid json",
+                },
+                status=400,
+            )
+
+        device_id = _norm(
+            body.get("device_id", "")
+        )
+
+        session_id = body.get("session_id")
+
+        if not device_id or not session_id:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": (
+                        "device_id and session_id "
+                        "are required"
+                    ),
+                },
+                status=400,
+            )
+
+        # 반드시 같은 워치의 baseline만 선택 가능
+        try:
+            session = ApneaSession.objects.get(
+                pk=session_id,
+                device_id=device_id,
+                baseline_ready=True,
+                baseline_stats__isnull=False,
+            )
+
+        except ApneaSession.DoesNotExist:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": (
+                        "baseline session not found "
+                        "for this device"
+                    ),
+                },
+                status=404,
+            )
+
+        engine = ApneaEngine.get_instance()
+
+        # 먼저 실제 엔진에 적용
+        applied = engine.select_baseline_session(
+            device_id=device_id,
+            session=session,
+        )
+
+        if not applied:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "failed to apply baseline",
+                },
+                status=500,
+            )
+
+        # 적용 성공했을 때만 DB 선택값 변경
+        config, _ = (
+            ApneaDeviceConfig.objects.get_or_create(
+                device_id=device_id
+            )
+        )
+
+        config.selected_baseline_session = session
+
+        config.save(
+            update_fields=[
+                "selected_baseline_session",
+                "updated_at",
+            ]
+        )
+
+        return JsonResponse({
+            "ok": True,
+            "device_id": device_id,
+            "session_id": session.pk,
+            "measured_at": session.started_at.isoformat(),
+        })
 
 class RecordsView(View):
     def get(self, request):
@@ -271,100 +448,210 @@ class DeviceDashboardView(View):
                 "received_at":  c.received_at.isoformat() if c.received_at else None,
             })
 
-        kakao_key = getattr(settings, "KAKAO_JS_KEY", "")
 
         return render(request, "apnea/dashboard_device.html", {
             "device_id":      device_id,
             "protectee_name": protectee_name,
             "items":          items,
-            "KAKAO_JS_KEY":   kakao_key,
         })
 
 
 class EventStatusView(View):
-    """GET /apnea/api/event_status/?device_id=..."""
+    """
+    GET /apnea/api/event_status/?device_id=...
+
+    최신 IMU 위험 레벨과 최근 3분의 레벨 이력 반환.
+    """
+
     def get(self, request):
-        device_id = request.GET.get("device_id")
-        if not device_id:
-            return JsonResponse({"ok": False, "error": "device_id required"}, status=400)
-
-        from django.utils import timezone
         from datetime import timedelta
-        from django.db import connection
+        from django.utils import timezone
+        from monitoring.models import Event
 
-        since = timezone.now() - timedelta(minutes=3)
+        device_id = request.GET.get("device_id")
 
-        # protectee 조회
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT id, name FROM monitoring_protectee WHERE device_id = %s LIMIT 1",
-                    [device_id]
-                )
-                row = cursor.fetchone()
-        except Exception as e:
-            logger.warning(f"[EventStatusView] protectee query error: {e}")
-            row = None
+        if not device_id:
+            return JsonResponse({
+                "ok": False,
+                "error": "device_id required",
+            }, status=400)
 
-        if not row:
-            return JsonResponse({"ok": False, "error": "protectee not found"}, status=404)
+        now = timezone.now()
+        since = now - timedelta(minutes=3)
 
-        protectee_id, protectee_name = row
+        qs = Event.objects.filter(
+            protectee__device_id=device_id,
+            event_type=Event.EventType.IMU_ALERT,
+            timestamp__gte=since,
+            timestamp__lte=now,
+        )
 
-        # 최근 3분 IMU 이벤트
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT imu_danger_level, timestamp, latitude, longitude
-                    FROM monitoring_event
-                    WHERE protectee_id = %s
-                      AND timestamp >= %s
-                    ORDER BY timestamp DESC
-                    LIMIT 1
-                """, [protectee_id, since])
-                ev = cursor.fetchone()
-        except Exception as e:
-            logger.warning(f"[EventStatusView] event query error: {e}")
-            ev = None
+        latest = (
+            qs.order_by("-timestamp", "-id")
+            .first()
+        )
 
-        # 최신 위치 (geo_processed_data)
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT latitude, longitude
-                    FROM geo_processed_data
-                    WHERE protectee_id = %s
-                      AND pos_success = 1
-                    ORDER BY id DESC
-                    LIMIT 1
-                """, [protectee_id])
-                geo = cursor.fetchone()
-        except Exception as e:
-            logger.warning(f"[EventStatusView] geo query error: {e}")
-            geo = None
+        if latest is None:
+            return JsonResponse({
+                "ok": True,
+                "imu_display": "데이터 없음",
+                "imu_danger_level": None,
+                "timestamp": None,
+                "history": [],
+            })
 
-        # 착용 여부 (최신 chunk)
-        latest_chunk = (ApneaChunk.objects
-                        .filter(device_id=_norm(device_id))
-                        .order_by("-timestamp")
-                        .first())
-        wear = {
-            "valid": latest_chunk.wear_valid if latest_chunk else None,
-            "label": latest_chunk.wear_label if latest_chunk else None,
-            "prob":  latest_chunk.wear_prob  if latest_chunk else None,
-        }
+        rows = (
+            qs.order_by("timestamp", "id")
+            .values(
+                "id",
+                "timestamp",
+                "imu_danger_level",
+            )
+        )
 
-        lat = geo[0] if geo else (ev[2] if ev else None)
-        lon = geo[1] if geo else (ev[3] if ev else None)
+        history = []
+
+        for row in rows:
+            history.append({
+                "id": row["id"],
+                "timestamp": row["timestamp"].isoformat(),
+                "level": row["imu_danger_level"],
+                "offset_sec": (
+                    now - row["timestamp"]
+                ).total_seconds(),
+            })
+
+        level = latest.imu_danger_level
+
+        if level is None:
+            display = "데이터 없음"
+        elif level >= 4:
+            display = "위험"
+        elif level >= 2:
+            display = "주의"
+        else:
+            display = "안정"
 
         return JsonResponse({
-            "ok":               True,
-            "device_id":        device_id,
-            "protectee_name":   protectee_name,
-            "imu_display":      str(ev[0]) if ev and ev[0] is not None else "안정",
-            "imu_danger_level": ev[0] if ev else None,
-            "latitude":         float(lat) if lat is not None else None,
-            "longitude":        float(lon) if lon is not None else None,
-            "timestamp":        ev[1].isoformat() if ev and ev[1] else None,
-            "wear":             wear,
+            "ok": True,
+            "imu_display": display,
+            "imu_danger_level": level,
+            "timestamp": latest.timestamp.isoformat(),
+            "result_id": latest.id,
+            "history": history,
         })
+
+
+class SosStatusView(View):
+    """
+    GET /apnea/api/sos/status/?device_id=...
+    """
+
+    def get(self, request):
+        from django.utils import timezone
+
+        from .models import SosIncident
+        from .sos_services import check_and_create_sos
+
+        device_id = request.GET.get("device_id")
+
+        if not device_id:
+            return JsonResponse({
+                "ok": False,
+                "error": "device_id required",
+            }, status=400)
+
+        # 현재 저장된 센서 결과로 SOS 판정
+        check_and_create_sos(device_id)
+
+        incident = (
+            SosIncident.objects
+            .filter(
+                device_id=device_id,
+                closed_at__isnull=True,
+            )
+            .order_by("-occurred_at")
+            .first()
+        )
+
+        if incident is None:
+            return JsonResponse({
+                "ok": True,
+                "active": False,
+                "sos": None,
+            })
+
+        return JsonResponse({
+            "ok": True,
+            "active": True,
+            "sos": {
+                "incident_id": incident.id,
+                "rule": incident.rule,
+                "occurred_at": incident.occurred_at.isoformat(),
+                "elapsed_sec": max(
+                    0,
+                    (
+                        timezone.now() - incident.occurred_at
+                    ).total_seconds(),
+                ),
+                **incident.detail,
+            },
+        })
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class SosCloseView(View):
+    """
+    POST /apnea/api/sos/close/
+
+    body:
+    {
+        "device_id": "...",
+        "incident_id": 1
+    }
+    """
+
+    def post(self, request):
+        import json
+
+        from .sos_services import close_sos
+
+        try:
+            body = json.loads(request.body or b"{}")
+        except (ValueError, TypeError):
+            return JsonResponse({
+                "ok": False,
+                "error": "invalid json",
+            }, status=400)
+
+        device_id = body.get("device_id")
+        incident_id = body.get("incident_id")
+
+        if (
+            not device_id
+            or type(incident_id) is not int
+        ):
+            return JsonResponse({
+                "ok": False,
+                "error": "device_id, incident_id required",
+            }, status=400)
+
+        incident = close_sos(
+            device_id=device_id,
+            incident_id=incident_id,
+        )
+
+        if incident is None:
+            return JsonResponse({
+                "ok": False,
+                "error": "SOS incident not found",
+            }, status=404)
+
+        return JsonResponse({
+            "ok": True,
+            "closed": True,
+            "incident_id": incident.id,
+            "closed_at": incident.closed_at.isoformat(),
+        })
+
+    

@@ -11,14 +11,18 @@ import numpy as np
 import torch
 import torch.nn as nn
 from scipy.signal import butter, filtfilt, find_peaks
+from .models import (
+    ApneaSession,
+    ApneaDeviceConfig,
+)
 
 logger = logging.getLogger(__name__)
 
 FS               = 25.0
 SHORT_GAP_THRESH = 3
 BEAT_FEATURES    = ["FO_SP_s", "Downstroke_vel", "HR_bpm", "RR_s", "QI"]
-BASELINE_PACKETS = 8
-MIN_BASELINE_SAMPLES = int(FS * 90)
+BASELINE_PACKETS = 3
+MIN_BASELINE_SAMPLES = int(FS * 30)
 
 
 def butter_bandpass(low, high, fs, order=3):
@@ -92,14 +96,65 @@ def find_onset_before_peak(ppg_norm, ppg_diff, i_peak, fs, search_sec=0.6):
     return int(i0 + int(np.nanargmin(ppg_norm[i0:i_peak + 1])))
 
 
-def find_notch_after_peak(ppg_norm, i_peak, fs, search_lo=0.06, search_hi=0.40):
-    i1 = i_peak + int(search_lo * fs)
-    i2 = min(len(ppg_norm) - 1, i_peak + int(search_hi * fs))
-    if i1 >= i2:
-        return None
-    mins, _ = find_peaks(-ppg_norm[i1:i2], prominence=0.005)
-    return int(i1 + mins[0]) if mins.size > 0 else None
+# def find_notch_after_peak(ppg_norm, i_peak, fs, search_lo=0.06, search_hi=0.40):
+#     i1 = i_peak + int(search_lo * fs)
+#     i2 = min(len(ppg_norm) - 1, i_peak + int(search_hi * fs))
+#     if i1 >= i2:
+#         return None
+#     mins, _ = find_peaks(-ppg_norm[i1:i2], prominence=0.005)
+#     return int(i1 + mins[0]) if mins.size > 0 else None
 
+def find_notch_after_peak(
+    ppg_norm,
+    i_peak,
+    fs,
+    search_lo=0.06,
+    search_hi=0.40,
+):
+    i1 = i_peak + int(search_lo * fs)
+    i2 = min(
+        len(ppg_norm) - 1,
+        i_peak + int(search_hi * fs),
+    )
+
+    if i1 >= i2:
+        print(
+            f"[DN_FAIL] invalid range "
+            f"peak={i_peak} "
+            f"i1={i1} i2={i2}"
+        )
+        return None
+
+    segment = ppg_norm[i1:i2]
+
+    mins, props = find_peaks(
+        -segment,
+        prominence=0.005,
+    )
+
+    if mins.size == 0:
+        print(
+            "[DN_FAIL] "
+            f"peak={i_peak} "
+            f"range={i1}:{i2} "
+            f"n={len(segment)} "
+            f"min={float(np.min(segment)):.5f} "
+            f"max={float(np.max(segment)):.5f} "
+            f"values={np.round(segment, 4).tolist()}"
+        )
+        return None
+
+    dn = int(i1 + mins[0])
+
+    print(
+        "[DN_OK] "
+        f"peak={i_peak} "
+        f"dn={dn} "
+        f"delay={(dn - i_peak) / fs:.3f}s "
+        f"prominence={float(props['prominences'][0]):.5f}"
+    )
+
+    return dn
 
 def _check_fiducial_order(fid):
     order  = ["FO", "SP", "DN", "DP"]
@@ -367,17 +422,13 @@ class RealtimeBeatExtractor:
     def __init__(
         self,
         fs=FS,
-        rolling_seconds=20.0,
-        safe_margin_seconds=1.0,
-        min_rr_sec=0.45,
-        max_rr_sec=1.5,
+        rolling_seconds=13.0,
+        safe_margin_seconds=0.6,
     ):
         self.fs            = fs
         self.rolling_n     = int(rolling_seconds * fs)
         self.safe_margin_n = int(safe_margin_seconds * fs)
 
-        self.min_rr_sec = float(min_rr_sec)
-        self.max_rr_sec = float(max_rr_sec)
 
         self.raw_buffer = deque(maxlen=self.rolling_n)
 
@@ -443,23 +494,9 @@ class RealtimeBeatExtractor:
                 else (sp_global - self.prev_sp_global) / self.fs
             )
 
-            # ✅ RR sanity check
-            # 너무 가까운 가짜 peak 또는 너무 먼 이상 peak는 beat로 사용하지 않음
-            if self.prev_sp_global is not None:
-
-                # 비정상 값
-                if not np.isfinite(rr_s):
-                    rr_s = np.nan
-
-                # 너무 짧은 RR → 가짜 peak 가능성 높음 → beat 버림
-                elif rr_s < self.min_rr_sec:
-                    continue
-
-                # 너무 긴 RR → beat는 살리고 RR/HR만 무효 처리
-                elif rr_s > self.max_rr_sec:
-                    rr_s = np.nan
-
-            fo  = find_onset_before_peak(ppg_norm, diff, int(sp), self.fs)
+            fo = find_onset_before_peak(
+                ppg_norm, diff, int(sp), self.fs
+            )
             dn  = find_notch_after_peak(ppg_norm, int(sp), self.fs)
             fid = clean_fiducials(Fiducials(FO=fo, SP=int(sp), DN=dn, DP=None), self.fs)
 
@@ -532,8 +569,8 @@ class RealtimeApneaDetector:
         self.ref_sd = ref_sd.astype(np.float32)
 
         self.threshold_from_train = float(threshold_from_train)
-        self.hi = float(hi) if hi is not None else self.threshold_from_train
-        self.lo = float(lo) if lo is not None else self.threshold_from_train - 0.1
+        self.hi = float(hi) if hi is not None else max(0.55, self.threshold_from_train)
+        self.lo = float(lo) if lo is not None else min(0.45, self.threshold_from_train - 0.1)
 
         self.smoother = RealtimeSmoother(win=smooth_win)
         self.hysteresis = RealtimeHysteresis(
@@ -675,6 +712,10 @@ class ApneaEngine:
         self._packet_count: Dict[str, int] = {}
         self._baseline_active: Dict[str, bool] = {}
         self._session_pk: Dict[str, int] = {}
+        # 새 baseline 실패 시 기존 baseline 복구용
+        self._backup_detectors = {}
+        self._backup_extractors = {}
+        self._backup_baseline_done = {}
 
     @classmethod
     def get_instance(cls):
@@ -722,170 +763,970 @@ class ApneaEngine:
     def model_config(self):
         return dict(self._model_cfg) if self._model_cfg else None
 
-    def start_session(self, device_id: str, session_pk: int = None):
+    def start_session(
+        self,
+        device_id: str,
+        session_pk: int = None,
+    ):
+        self._ensure_device(device_id)
+
         with self._dev_lock:
+
+            # =====================================================
+            # ★ 현재 정상 동작 중인 baseline 상태 백업
+            # =====================================================
+
+            self._backup_detectors[device_id] = (
+                self._detectors.get(device_id)
+            )
+
+            self._backup_extractors[device_id] = (
+                self._extractors.get(device_id)
+            )
+
+            self._backup_baseline_done[device_id] = (
+                self._baseline_done.get(
+                    device_id,
+                    False,
+                )
+            )
+
+            # =====================================================
+            # 새 baseline 측정 시작
+            # =====================================================
+
+            self._baseline_buf[device_id] = []
+
+            self._baseline_done[device_id] = False
+
+            self._baseline_active[device_id] = True
+
+            self._packet_count[device_id] = 0
+
+            self._session_pk[device_id] = session_pk
+
+            # 새 baseline용 extractor
+            self._extractors[device_id] = (
+                RealtimeBeatExtractor(
+                    fs=FS,
+                    rolling_seconds=13.0,
+                    safe_margin_seconds=0.6,
+                )
+            )
+
+            # 새 baseline 측정 중에는 inference 중지.
+            # 기존 detector는 위 backup에 보관되어 있음.
+            self._detectors.pop(
+                device_id,
+                None,
+            )
+
+        logger.info(
+            "[ApneaEngine] baseline session started: "
+            "device=%s session=%s "
+            "previous_baseline=%s",
+            device_id,
+            session_pk,
+            self._backup_baseline_done.get(
+                device_id,
+                False,
+            ),
+        )
+
+    def _ensure_device(self, device_id: str):
+        if device_id in self._packet_count:
+            return
+
+        with self._dev_lock:
+            # 다른 thread가 먼저 만들었을 수도 있으므로 재확인
+            if device_id in self._packet_count:
+                return
+
             self._baseline_buf[device_id] = []
             self._baseline_done[device_id] = False
-            self._baseline_active[device_id] = True
+            self._baseline_active[device_id] = False
             self._packet_count[device_id] = 0
-            self._session_pk[device_id] = session_pk
 
             self._extractors[device_id] = RealtimeBeatExtractor(
                 fs=FS,
-                rolling_seconds=20.0,
-                safe_margin_seconds=1.0,
-                min_rr_sec=0.45,
-                max_rr_sec=1.5,
+                rolling_seconds=13.0,
+                safe_margin_seconds=0.6,
             )
 
-            self._detectors.pop(device_id, None)
-
-        logger.info(f"[ApneaEngine] session started: {device_id}")
-
-    def _ensure_device(self, device_id: str):
-        if device_id not in self._packet_count:
-            with self._dev_lock:
-                self._baseline_buf[device_id] = []
-                self._baseline_done[device_id] = False
-                self._baseline_active[device_id] = False
-                self._packet_count[device_id] = 0
-
-                self._extractors[device_id] = RealtimeBeatExtractor(
-                    fs=FS,
-                    rolling_seconds=20.0,
-                    safe_margin_seconds=1.0,
-                    min_rr_sec=0.45,
-                    max_rr_sec=1.5,
-                )
-
-    def _finalize_baseline(self, device_id: str, session_db):
-        from .models import ApneaSession
-        session_pk = self._session_pk.get(device_id)
-
-        # PK가 없으면 넘어온 객체에서라도 PK를 건져서 확보
-        if not session_pk and session_db is not None:
-            session_pk = getattr(session_db, "pk", None)
-
-        if not session_pk:
-            # 저장할 대상을 특정할 수 없음 → 명확히 경고 (조용히 NULL 방지)
-            logger.error(
-                f"[baseline] {device_id}: no session_pk available, "
-                f"baseline_stats will NOT be saved"
-            )
-
-        raw = np.array(self._baseline_buf[device_id], dtype=float)
-
-        bt = process_raw_to_beat_table_offline(raw, fs=FS)
-        ref_seq = beat_table_to_seq_for_ref(bt)
-
-        if len(ref_seq) < 10:
-            logger.warning(f"[baseline] {device_id}: beats too few ({len(ref_seq)})")
-            with self._dev_lock:
-                self._baseline_buf[device_id] = []
-            return
-
-        ref_mu, ref_sd = compute_baseline_stats(ref_seq)
-
-        cfg = self._model_cfg or {}
-        context_len = int(cfg.get("context_len", 20))
-        threshold = float(cfg.get("threshold", 0.5))
-        device_str = "cuda" if torch.cuda.is_available() else "cpu"
-
-        detector = RealtimeApneaDetector(
-            model=self._model,
-            context_len=context_len,
-            ref_mu=ref_mu,
-            ref_sd=ref_sd,
-            threshold_from_train=threshold,
-            device=device_str,
+        # DB 접근은 lock 밖에서
+        restored = self.restore_selected_baseline(
+            device_id
         )
 
-        last_beats = ref_seq[-10:] if len(ref_seq) >= 10 else ref_seq
-        for feat_vec in last_beats:
-            norm_vec = normalize_feature_vector(feat_vec.astype(np.float32), ref_mu, ref_sd)
-            detector.beat_window.append(norm_vec)
+        if restored:
+            logger.info(
+                f"[ApneaEngine] saved baseline restored: "
+                f"{device_id}"
+            )
+        else:
+            logger.info(
+                f"[ApneaEngine] no saved baseline: "
+                f"{device_id}"
+            )
 
-        old = self._extractors.get(device_id)
+    def _fail_baseline(
+        self,
+        device_id: str,
+        reason: str,
+    ):
+        logger.error(
+            "[baseline] FAILED device=%s reason=%s",
+            device_id,
+            reason,
+        )
+
+        with self._dev_lock:
+
+            # =====================================================
+            # 새 baseline 측정 전에 사용하던 상태 가져오기
+            # =====================================================
+
+            old_detector = (
+                self._backup_detectors.pop(
+                    device_id,
+                    None,
+                )
+            )
+
+            old_extractor = (
+                self._backup_extractors.pop(
+                    device_id,
+                    None,
+                )
+            )
+
+            old_done = (
+                self._backup_baseline_done.pop(
+                    device_id,
+                    False,
+                )
+            )
+
+            # =====================================================
+            # 새 baseline 측정 종료
+            # =====================================================
+
+            self._baseline_active[device_id] = False
+
+            self._baseline_buf[device_id] = []
+
+
+            # =====================================================
+            # ★ 기존 baseline이 있었다면 복구
+            # =====================================================
+
+            if (
+                old_done
+                and old_detector is not None
+            ):
+
+                self._detectors[device_id] = (
+                    old_detector
+                )
+
+                if old_extractor is not None:
+                    self._extractors[device_id] = (
+                        old_extractor
+                    )
+
+                self._baseline_done[device_id] = True
+
+                logger.info(
+                    "[baseline] previous baseline restored: "
+                    "device=%s",
+                    device_id,
+                )
+
+            # =====================================================
+            # 기존 baseline 자체가 없었던 경우
+            # =====================================================
+
+            else:
+
+                self._detectors.pop(
+                    device_id,
+                    None,
+                )
+
+                self._baseline_done[device_id] = False
+
+                logger.info(
+                    "[baseline] no previous baseline: "
+                    "device=%s",
+                    device_id,
+                )
+
+        logger.info(
+            "[baseline] state after failure: "
+            "device=%s active=%s done=%s detector=%s",
+            device_id,
+            self._baseline_active.get(device_id),
+            self._baseline_done.get(device_id),
+            self._detectors.get(device_id) is not None,
+        )
+
+    def _finalize_baseline(
+        self,
+        device_id: str,
+        session_db,
+    ):
+        import json
+
+        session_pk = self._session_pk.get(device_id)
+
+        # session_pk가 없으면 전달받은 session 객체에서 확보
+        if not session_pk and session_db is not None:
+            session_pk = getattr(
+                session_db,
+                "pk",
+                None,
+            )
+
+        if not session_pk:
+            logger.error(
+                "[baseline] %s: no session_pk available",
+                device_id,
+            )
+
+        # =========================================================
+        # 1. baseline raw 가져오기
+        # =========================================================
+
+        with self._dev_lock:
+            raw_buffer = list(
+                self._baseline_buf.get(
+                    device_id,
+                    [],
+                )
+            )
+
+        raw = np.asarray(
+            raw_buffer,
+            dtype=float,
+        )
+
+        logger.info(
+            "[baseline] finalize: "
+            "device=%s samples=%d required=%d",
+            device_id,
+            len(raw),
+            MIN_BASELINE_SAMPLES,
+        )
+
+        # 혹시 750개 미만에서 호출됐다면 실패
+        if len(raw) < MIN_BASELINE_SAMPLES:
+            self._fail_baseline(
+                device_id,
+                (
+                    f"not enough samples: "
+                    f"{len(raw)}/"
+                    f"{MIN_BASELINE_SAMPLES}"
+                ),
+            )
+            return
+
+        # =========================================================
+        # 2. Offline beat feature 추출
+        # =========================================================
+
+        try:
+            bt = process_raw_to_beat_table_offline(
+                raw,
+                fs=FS,
+            )
+
+            ref_seq = beat_table_to_seq_for_ref(
+                bt
+            )
+
+        except Exception as e:
+            logger.exception(
+                "[baseline] feature extraction error "
+                "device=%s: %s",
+                device_id,
+                e,
+            )
+
+            self._fail_baseline(
+                device_id,
+                f"feature extraction error: {e}",
+            )
+            return
+
+        # =========================================================
+        # 3. beat 개수 검사
+        # =========================================================
+
+        if len(ref_seq) < 10:
+            self._fail_baseline(
+                device_id,
+                f"too few beats: {len(ref_seq)}",
+            )
+            return
+
+        # =========================================================
+        # 4. baseline statistics 계산
+        # =========================================================
+
+        try:
+            ref_mu, ref_sd = (
+                compute_baseline_stats(
+                    ref_seq
+                )
+            )
+
+            ref_mu = np.asarray(
+                ref_mu,
+                dtype=np.float64,
+            )
+
+            ref_sd = np.asarray(
+                ref_sd,
+                dtype=np.float64,
+            )
+
+        except Exception as e:
+            logger.exception(
+                "[baseline] stats calculation error "
+                "device=%s: %s",
+                device_id,
+                e,
+            )
+
+            self._fail_baseline(
+                device_id,
+                f"stats calculation error: {e}",
+            )
+            return
+
+        # =========================================================
+        # 5. NaN / Inf 검사
+        # =========================================================
+
+        if not np.all(
+            np.isfinite(ref_mu)
+        ):
+            self._fail_baseline(
+                device_id,
+                (
+                    "invalid ref_mu: "
+                    f"{ref_mu.tolist()}"
+                ),
+            )
+            return
+
+        if not np.all(
+            np.isfinite(ref_sd)
+        ):
+            self._fail_baseline(
+                device_id,
+                (
+                    "invalid ref_sd: "
+                    f"{ref_sd.tolist()}"
+                ),
+            )
+            return
+
+        # =========================================================
+        # 6. 모델 설정
+        # =========================================================
+
+        cfg = self._model_cfg or {}
+
+        context_len = int(
+            cfg.get(
+                "context_len",
+                20,
+            )
+        )
+
+        threshold = float(
+            cfg.get(
+                "threshold",
+                0.5,
+            )
+        )
+
+        device_str = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
+        )
+
+        # =========================================================
+        # 7. detector 생성
+        # =========================================================
+
+        try:
+            detector = RealtimeApneaDetector(
+                model=self._model,
+                context_len=context_len,
+                ref_mu=ref_mu,
+                ref_sd=ref_sd,
+                threshold_from_train=threshold,
+                device=device_str,
+            )
+
+        except Exception as e:
+            logger.exception(
+                "[baseline] detector creation error "
+                "device=%s: %s",
+                device_id,
+                e,
+            )
+
+            self._fail_baseline(
+                device_id,
+                f"detector creation error: {e}",
+            )
+            return
+
+        # =========================================================
+        # 8. 기존 로직 유지
+        #
+        # baseline 마지막 최대 10 beats만 prefill
+        # =========================================================
+
+        last_beats = (
+            ref_seq[-10:]
+            if len(ref_seq) >= 10
+            else ref_seq
+        )
+
+        try:
+            for feat_vec in last_beats:
+
+                norm_vec = (
+                    normalize_feature_vector(
+                        feat_vec.astype(
+                            np.float32
+                        ),
+                        ref_mu,
+                        ref_sd,
+                    )
+                )
+
+                # normalized feature에도 NaN/Inf가
+                # 없는지 방어
+                if not np.all(
+                    np.isfinite(norm_vec)
+                ):
+                    self._fail_baseline(
+                        device_id,
+                        (
+                            "invalid normalized "
+                            "prefill feature: "
+                            f"{norm_vec.tolist()}"
+                        ),
+                    )
+                    return
+
+                detector.beat_window.append(
+                    norm_vec
+                )
+
+        except Exception as e:
+            logger.exception(
+                "[baseline] prefill error "
+                "device=%s: %s",
+                device_id,
+                e,
+            )
+
+            self._fail_baseline(
+                device_id,
+                f"prefill error: {e}",
+            )
+            return
+
+        # =========================================================
+        # 9. 기존 realtime extractor 상태 이어받기
+        # =========================================================
+
+        old = self._extractors.get(
+            device_id
+        )
 
         new_ext = RealtimeBeatExtractor(
-            fs=FS,
-            rolling_seconds=20.0,
-            safe_margin_seconds=1.0,
-            min_rr_sec=0.45,
-            max_rr_sec=1.5,
+                fs=FS,
+                rolling_seconds=13.0,
+                safe_margin_seconds=0.6,
         )
 
         if old is not None:
-            new_ext.raw_buffer = deque(old.raw_buffer, maxlen=new_ext.rolling_n)
-            new_ext.global_sample_idx = old.global_sample_idx
-            new_ext.buffer_start_global_idx = old.buffer_start_global_idx
-            new_ext.prev_sp_global = old.prev_sp_global
-            new_ext.last_processed_sp_global = old.last_processed_sp_global
-            new_ext.beat_idx = old.beat_idx
 
-        # DB 저장: 무조건 PK로 직접 갱신 + 검증 
-        #      메모리 상태(baseline_done) 변경 "전"에 먼저 저장 시도
+            new_ext.raw_buffer = deque(
+                old.raw_buffer,
+                maxlen=new_ext.rolling_n,
+            )
+
+            new_ext.global_sample_idx = (
+                old.global_sample_idx
+            )
+
+            new_ext.buffer_start_global_idx = (
+                old.buffer_start_global_idx
+            )
+
+            new_ext.prev_sp_global = (
+                old.prev_sp_global
+            )
+
+            new_ext.last_processed_sp_global = (
+                old.last_processed_sp_global
+            )
+
+            new_ext.beat_idx = (
+                old.beat_idx
+            )
+
+        # =========================================================
+        # 10. DB 저장용 baseline_stats
+        # =========================================================
+
         baseline_stats = {
             "ref_mu": ref_mu.tolist(),
             "ref_sd": ref_sd.tolist(),
-            "num_beats": int(len(ref_seq)),
-            "prefilled_beats": int(min(context_len - 1, len(ref_seq))),
+
+            "num_beats": int(
+                len(ref_seq)
+            ),
+
+            # 실제 넣은 개수.
+            # 최대 10.
+            "prefilled_beats": int(
+                len(last_beats)
+            ),
+
+            "baseline_samples": int(
+                len(raw)
+            ),
+
+            "baseline_seconds": float(
+                len(raw) / FS
+            ),
+
             "rolling_seconds": 20.0,
             "safe_margin_seconds": 1.0,
             "min_rr_sec": 0.45,
             "max_rr_sec": 1.5,
         }
 
+        # =========================================================
+        # 11. SQLite JSONField에 저장하기 전에 검증
+        # =========================================================
+
+        try:
+            json.dumps(
+                baseline_stats,
+                allow_nan=False,
+            )
+
+        except (
+            ValueError,
+            TypeError,
+        ) as e:
+
+            self._fail_baseline(
+                device_id,
+                (
+                    "invalid baseline JSON: "
+                    f"{e}"
+                ),
+            )
+            return
+
+        # =========================================================
+        # 12. ApneaSession 저장
+        # =========================================================
+
         saved_ok = False
-        if session_pk:
-            # 넘어온 session_db 객체를 쓰지 않고, PK 기준 .update()로 직접 DB row 갱신
-            # → stale 객체 / 세션 불일치 / update_fields 누락 문제를 한 번에 제거
-            try:
-                updated = ApneaSession.objects.filter(pk=session_pk).update(
+
+        if not session_pk:
+            self._fail_baseline(
+                device_id,
+                "session_pk missing",
+            )
+            return
+
+        try:
+            updated = (
+                ApneaSession.objects
+                .filter(
+                    pk=session_pk
+                )
+                .update(
                     baseline_ready=True,
                     baseline_stats=baseline_stats,
                     model_config=dict(cfg),
                 )
-                if updated == 1:
-                    saved_ok = True
-                else:
-                    # PK는 있는데 해당 row가 없음(삭제됨 등) → 명확히 경고
-                    logger.error(
-                        f"[baseline] {device_id}: session pk={session_pk} "
-                        f"not found for update (updated={updated})"
-                    )
-            except Exception as e:
-                logger.error(f"[baseline] DB save error (pk={session_pk}): {e}")
+            )
 
-            # 저장 검증: 진짜로 NULL이 아닌지 다시 읽어 확인
-            if saved_ok:
-                try:
-                    row = ApneaSession.objects.filter(pk=session_pk).values(
-                        "baseline_stats"
-                    ).first()
-                    if not row or row["baseline_stats"] is None:
-                        saved_ok = False
-                        logger.error(
-                            f"[baseline] {device_id}: verify failed, "
-                            f"baseline_stats still NULL pk={session_pk}"
-                        )
-                except Exception as e:
-                    logger.warning(f"[baseline] verify read error: {e}")
+            if updated != 1:
 
-        # 메모리 상태 확정: 추론 단계로 전환
-        #     (DB 저장 성공 여부와 무관하게 추론은 시작 — 단 로그로 분리 추적)
+                self._fail_baseline(
+                    device_id,
+                    (
+                        "session update failed: "
+                        f"pk={session_pk} "
+                        f"updated={updated}"
+                    ),
+                )
+                return
+
+            saved_ok = True
+
+            logger.info(
+                "[baseline] DB saved: "
+                "device=%s "
+                "pk=%s "
+                "samples=%d "
+                "beats=%d",
+                device_id,
+                session_pk,
+                len(raw),
+                len(ref_seq),
+            )
+
+        except Exception as e:
+
+            logger.exception(
+                "[baseline] DB save error "
+                "(pk=%s): %s",
+                session_pk,
+                e,
+            )
+
+            self._fail_baseline(
+                device_id,
+                f"DB save error: {e}",
+            )
+            return
+
+        # =========================================================
+        # 13. DB 저장 검증
+        # =========================================================
+
+        try:
+            row = (
+                ApneaSession.objects
+                .filter(
+                    pk=session_pk
+                )
+                .values(
+                    "baseline_ready",
+                    "baseline_stats",
+                )
+                .first()
+            )
+
+            if (
+                not row
+                or not row["baseline_ready"]
+                or row["baseline_stats"] is None
+            ):
+
+                self._fail_baseline(
+                    device_id,
+                    (
+                        "DB verify failed: "
+                        f"pk={session_pk}"
+                    ),
+                )
+                return
+
+        except Exception as e:
+
+            logger.exception(
+                "[baseline] DB verify error: %s",
+                e,
+            )
+
+            self._fail_baseline(
+                device_id,
+                f"DB verify error: {e}",
+            )
+            return
+
+        # =========================================================
+        # 14. 성공한 baseline을 현재 baseline으로 자동 선택
+        # =========================================================
+
+        try:
+            baseline_session = (
+                ApneaSession.objects.get(
+                    pk=session_pk,
+                    device_id=device_id,
+                    baseline_ready=True,
+                )
+            )
+
+            config, _ = (
+                ApneaDeviceConfig.objects
+                .get_or_create(
+                    device_id=device_id
+                )
+            )
+
+            config.selected_baseline_session = (
+                baseline_session
+            )
+
+            config.save(
+                update_fields=[
+                    "selected_baseline_session",
+                    "updated_at",
+                ]
+            )
+
+            logger.info(
+                "[baseline] auto selected: "
+                "device=%s "
+                "session=%s "
+                "started_at=%s",
+                device_id,
+                session_pk,
+                baseline_session.started_at,
+            )
+
+        except Exception as e:
+            # 여기서는 baseline 자체의 DB 저장은 이미 성공했음.
+            # 따라서 baseline 측정 자체를 실패 처리하지 않고
+            # 자동 선택 실패만 기록한다.
+            logger.exception(
+                "[baseline] auto-select failed "
+                "device=%s session=%s: %s",
+                device_id,
+                session_pk,
+                e,
+            )
+
+        # =========================================================
+        # 15. 성공했을 때만 메모리 상태 전환
+        # =========================================================
+
         with self._dev_lock:
-            self._detectors[device_id] = detector
-            self._extractors[device_id] = new_ext
-            self._baseline_done[device_id] = True
+
+            self._detectors[device_id] = (
+                detector
+            )
+
+            self._extractors[device_id] = (
+                new_ext
+            )
+
+            self._baseline_done[device_id] = (
+                True
+            )
+
+            self._baseline_active[device_id] = (
+                False
+            )
+
+            self._baseline_buf[device_id] = []
+
+        # =========================================================
+        # 16. 완료
+        # =========================================================
 
         logger.info(
-            f"[ApneaEngine] baseline done: {device_id} "
-            f"beats={len(ref_seq)} "
-            f"prefill={min(context_len - 1, len(ref_seq))} "
-            f"db_saved={saved_ok} pk={session_pk}"  # ← NULL 추적 핵심 로그
+            "[ApneaEngine] baseline SUCCESS: "
+            "device=%s "
+            "pk=%s "
+            "samples=%d "
+            "seconds=%.2f "
+            "beats=%d "
+            "prefill=%d "
+            "db_saved=%s",
+            device_id,
+            session_pk,
+            len(raw),
+            len(raw) / FS,
+            len(ref_seq),
+            len(last_beats),
+            saved_ok,
         )
 
+    def select_baseline_session(
+        self,
+        device_id: str,
+        session: ApneaSession,
+    ) -> bool:
+
+        try:
+            if not self._model_ready:
+                logger.error(
+                    "[baseline-select] model is not ready"
+                )
+                return False
+
+            # 안전 검사
+            if session.device_id != device_id:
+                logger.error(
+                    f"[baseline-select] device mismatch: "
+                    f"requested={device_id}, "
+                    f"session_device={session.device_id}"
+                )
+                return False
+
+            if not session.baseline_ready:
+                logger.error(
+                    f"[baseline-select] baseline not ready: "
+                    f"session={session.pk}"
+                )
+                return False
+
+            stats = session.baseline_stats or {}
+
+            ref_mu_raw = stats.get("ref_mu")
+            ref_sd_raw = stats.get("ref_sd")
+
+            if ref_mu_raw is None or ref_sd_raw is None:
+                logger.error(
+                    f"[baseline-select] ref_mu/ref_sd missing: "
+                    f"session={session.pk}"
+                )
+                return False
+
+            ref_mu = np.asarray(
+                ref_mu_raw,
+                dtype=np.float32,
+            )
+
+            ref_sd = np.asarray(
+                ref_sd_raw,
+                dtype=np.float32,
+            )
+
+            # feature 개수 검증
+            if (
+                len(ref_mu) != len(BEAT_FEATURES)
+                or len(ref_sd) != len(BEAT_FEATURES)
+            ):
+                logger.error(
+                    f"[baseline-select] invalid stats shape: "
+                    f"mu={len(ref_mu)}, "
+                    f"sd={len(ref_sd)}, "
+                    f"expected={len(BEAT_FEATURES)}"
+                )
+                return False
+
+            # 가능하면 baseline 측정 당시 모델 설정 사용
+            cfg = session.model_config or self._model_cfg or {}
+
+            context_len = int(
+                cfg.get(
+                    "context_len",
+                    (self._model_cfg or {}).get("context_len", 20),
+                )
+            )
+
+            threshold = float(
+                cfg.get(
+                    "threshold",
+                    (self._model_cfg or {}).get("threshold", 0.5),
+                )
+            )
+
+            device_str = (
+                "cuda"
+                if torch.cuda.is_available()
+                else "cpu"
+            )
+
+            detector = RealtimeApneaDetector(
+                model=self._model,
+                context_len=context_len,
+                ref_mu=ref_mu,
+                ref_sd=ref_sd,
+                threshold_from_train=threshold,
+                device=device_str,
+            )
+
+            # baseline을 바꾸는 순간 이전 baseline으로 만들어진
+            # extractor/context를 섞지 않고 새로 시작
+            extractor = RealtimeBeatExtractor(
+                fs=FS,
+                rolling_seconds=13.0,
+                safe_margin_seconds=0.6,
+            )
+
+            with self._dev_lock:
+                self._detectors[device_id] = detector
+                self._extractors[device_id] = extractor
+
+                self._baseline_buf[device_id] = []
+                self._baseline_done[device_id] = True
+                self._baseline_active[device_id] = False
+
+                if device_id not in self._packet_count:
+                    self._packet_count[device_id] = 0
+
+            logger.info(
+                    f"[baseline-select] applied: "
+                    f"device={device_id} "
+                    f"session={session.pk} "
+                    f"started_at={session.started_at}"
+                )
+
+            return True
+
+        except Exception as e:
+            logger.exception(
+                f"[baseline-select] failed: "
+                f"device={device_id}, "
+                f"session={getattr(session, 'pk', None)}, "
+                f"error={e}"
+            )
+
+            return False
+
+    def restore_selected_baseline(
+        self,
+        device_id: str,
+    ) -> bool:
+
+        try:
+            config = (
+                ApneaDeviceConfig.objects
+                .select_related("selected_baseline_session")
+                .filter(device_id=device_id)
+                .first()
+            )
+
+            if config is None:
+                logger.info(
+                    f"[baseline-restore] no config: "
+                    f"{device_id}"
+                )
+                return False
+
+            session = config.selected_baseline_session
+
+            if session is None:
+                logger.info(
+                    f"[baseline-restore] no selected baseline: "
+                    f"{device_id}"
+                )
+                return False
+
+            return self.select_baseline_session(
+                device_id=device_id,
+                session=session,
+            )
+
+        except Exception as e:
+            logger.exception(
+                f"[baseline-restore] failed: "
+                f"device={device_id}: {e}"
+            )
+            return False
+            
     def process_chunk(
         self,
         device_id: str,
@@ -896,126 +1737,554 @@ class ApneaEngine:
         packet_timestamp=None,
     ) -> dict:
 
+        # =========================================================
+        # 1. device 상태 준비
+        # =========================================================
+
         self._ensure_device(device_id)
 
         with self._dev_lock:
             self._packet_count[device_id] += 1
-            packet_idx = self._packet_count[device_id]
-            baseline_done = self._baseline_done[device_id]
 
-        arr = np.asarray(ppg_green, dtype=float)
+            packet_idx = self._packet_count[device_id]
+
+            baseline_done = self._baseline_done.get(
+                device_id,
+                False,
+            )
+
+            baseline_active = self._baseline_active.get(
+                device_id,
+                False,
+            )
+
+        # =========================================================
+        # 2. 입력 PPG
+        # =========================================================
+
+        arr = np.asarray(
+            ppg_green,
+            dtype=float,
+        )
+
+        # =========================================================
+        # 3. 착용 여부
+        # =========================================================
+
         wear = detect_wear_green(arr)
-        extractor = self._extractors.get(device_id)
+
+        # =========================================================
+        # 4. realtime extractor
+        # =========================================================
+
+        extractor = self._extractors.get(
+            device_id
+        )
+
+        # =========================================================
+        # 5. R ratio
+        #
+        # 기존 로직 그대로 유지
+        # =========================================================
 
         if ppg_ir and ppg_red:
-            r_ratio = compute_r_ratio_series(ppg_red, ppg_ir, fs=FS)
+
+            r_ratio = compute_r_ratio_series(
+                ppg_red,
+                ppg_ir,
+                fs=FS,
+            )
+
         else:
+
             r_ratio = []
+
+        # =========================================================
+        # 6. 현재 baseline 진행률
+        # =========================================================
+
+        current_baseline_samples = len(
+            self._baseline_buf.get(
+                device_id,
+                [],
+            )
+        )
+
+        baseline_progress = min(
+            1.0,
+            current_baseline_samples
+            / MIN_BASELINE_SAMPLES,
+        )
+
+        # =========================================================
+        # 7. 기본 결과
+        #
+        # 중요:
+        # 기본값은 is_baseline=False
+        # 실제 baseline 측정에 사용되는 packet에서만 True로 바꿈
+        # =========================================================
 
         result = {
             "packet_index": packet_idx,
+
             "baseline_ready": baseline_done,
-            "baseline_progress": min(
-                1.0,
-                len(self._baseline_buf.get(device_id, [])) / MIN_BASELINE_SAMPLES,
-            ),
+
+            "baseline_progress": baseline_progress,
+
+            "is_baseline": False,
+
             "wear": wear,
+
             "r_ratio_series": r_ratio,
+
             "beat_results": [],
+
             "p_apnea": None,
+
             "p_apnea_smooth": None,
+
             "pred_label": None,
-            "pred_status": "baseline",
-            "phase": "baseline",
+
+            "pred_status": "waiting_for_session",
+
+            "phase": "waiting",
         }
 
-        if not baseline_done:
-            baseline_active = self._baseline_active.get(device_id, False)
+        # =========================================================
+        # 8. BASELINE 측정 중인 경우
+        # =========================================================
 
-            if not baseline_active:
-                result["pred_status"] = "waiting_for_session"
-                return result
+        if baseline_active:
+
+            # =====================================================
+            # 9. 이 packet이 baseline 시작 이후 데이터인지 확인
+            # =====================================================
 
             include_in_baseline = True
 
-            if packet_timestamp and session_db and session_db.started_at:
+            if (
+                packet_timestamp is not None
+                and session_db is not None
+                and session_db.started_at is not None
+            ):
+
                 from datetime import timedelta
 
-                watch_end_time = packet_timestamp + timedelta(seconds=12)
-                if watch_end_time <= session_db.started_at:
+                # 기존 코드 기준:
+                # watch packet 하나가 약 12초 구간
+                watch_end_time = (
+                    packet_timestamp
+                    + timedelta(seconds=12)
+                )
+
+                # packet 전체가 baseline 시작 이전이면 제외
+                if (
+                    watch_end_time
+                    <= session_db.started_at
+                ):
+
                     include_in_baseline = False
+
                     logger.info(
-                        f"[baseline] skip packet before session: "
-                        f"watch_end={watch_end_time}, started_at={session_db.started_at}"
+                        "[baseline] skip packet before session: "
+                        "device=%s "
+                        "watch_end=%s "
+                        "started_at=%s",
+                        device_id,
+                        watch_end_time,
+                        session_db.started_at,
                     )
 
-            if not include_in_baseline:
-                result["pred_status"] = "before_session"
-                result["phase"]       = "waiting"  # ← baseline이 아님을 표시
-                if extractor is not None:
-                    extractor.feed_packet(arr)  # extractor는 계속 업데이트 (raw buffer 유지)
-                return result
-            
-            
-            if include_in_baseline:
-                with self._dev_lock:
-                    self._baseline_buf[device_id].extend(arr.tolist())
+            # =====================================================
+            # 10. baseline 시작 전 packet
+            # =====================================================
 
+            if not include_in_baseline:
+
+                result["is_baseline"] = False
+
+                result["pred_status"] = (
+                    "before_session"
+                )
+
+                result["phase"] = "waiting"
+
+                # realtime extractor 시간축은 유지
                 if extractor is not None:
                     extractor.feed_packet(arr)
 
-            if len(self._baseline_buf[device_id]) >= MIN_BASELINE_SAMPLES:
-                self._finalize_baseline(device_id, session_db)
+                return result
 
-                with self._dev_lock:
-                    baseline_done = self._baseline_done[device_id]
+            # =====================================================
+            # 11. 여기부터 실제 BASELINE packet
+            # =====================================================
 
-                result["baseline_ready"] = baseline_done
-                result["baseline_progress"] = 1.0
-                result["pred_status"] = (
-                    "baseline_just_completed"
-                    if baseline_done
-                    else "baseline_failed"
+            result["is_baseline"] = True
+
+            result["pred_status"] = "baseline"
+
+            result["phase"] = "baseline"
+
+    
+
+           # =====================================================
+            # 12. BASELINE DATA 수집
+            #
+            # 최소 30초(750 samples)가 확보될 때까지
+            # packet을 통째로 저장한다.
+            #
+            # 마지막 packet을 750에서 자르지 않는다.
+            #
+            # 예:
+            #   packet 1 -> 300
+            #   packet 2 -> 600
+            #   packet 3 -> 900
+            #
+            # 그러면 900 samples 전체를 baseline으로 사용한다.
+            # =====================================================
+
+            with self._dev_lock:
+
+                self._baseline_buf[
+                    device_id
+                ].extend(
+                    arr.tolist()
                 )
 
+                collected_n = len(
+                    self._baseline_buf[
+                        device_id
+                    ]
+                )
+
+            logger.info(
+                "[baseline] collecting: "
+                "device=%s "
+                "%d samples "
+                "(minimum=%d)",
+                device_id,
+                collected_n,
+                MIN_BASELINE_SAMPLES,
+            )
+
+            # =====================================================
+            # 13. extractor에는 packet 전체 공급
+            #
+            # baseline buffer는 750개까지만 사용하지만
+            # extractor는 실제 시간축 유지를 위해 packet 전체 사용
+            # =====================================================
+
+            if extractor is not None:
+
+                extractor.feed_packet(arr)
+
+            # =====================================================
+            # 14. 진행률 업데이트
+            # =====================================================
+
+            result["baseline_progress"] = min(
+                1.0,
+                collected_n
+                / MIN_BASELINE_SAMPLES,
+            )
+
+            result["baseline_ready"] = False
+
+            # =====================================================
+            # 15. 아직 750 samples 미만
+            # =====================================================
+
+            if (
+                collected_n
+                < MIN_BASELINE_SAMPLES
+            ):
+
+                return result
+
+            # =====================================================
+            # 16. 750 samples 도달
+            #
+            # 여기에서 한 번 finalize
+            # =====================================================
+
+            logger.info(
+                "[baseline] 30s reached: "
+                "device=%s "
+                "samples=%d",
+                device_id,
+                collected_n,
+            )
+
+            self._finalize_baseline(
+                device_id,
+                session_db,
+            )
+
+            # =====================================================
+            # 17. finalize 이후 상태 다시 확인
+            # =====================================================
+
+            with self._dev_lock:
+
+                baseline_done_after = (
+                    self._baseline_done.get(
+                        device_id,
+                        False,
+                    )
+                )
+
+                baseline_active_after = (
+                    self._baseline_active.get(
+                        device_id,
+                        False,
+                    )
+                )
+
+            # =====================================================
+            # 18. BASELINE 성공
+            # =====================================================
+
+            if baseline_done_after:
+
+                result["baseline_ready"] = True
+
+                result["baseline_progress"] = 1.0
+
+                # 이 packet은 baseline에 실제 사용됐음
+                result["is_baseline"] = True
+
+                result["pred_status"] = (
+                    "baseline_just_completed"
+                )
+
+                result["phase"] = "baseline"
+
+                logger.info(
+                    "[baseline] COMPLETE: "
+                    "device=%s",
+                    device_id,
+                )
+
+                return result
+
+            # =====================================================
+            # 19. BASELINE 실패
+            #
+            # 이 packet 자체는 baseline 측정에 사용됐으므로
+            # is_baseline=True가 맞음.
+            #
+            # 하지만 _fail_baseline()에서
+            # baseline_active=False가 됐기 때문에
+            # 다음 packet부터는 여기로 들어오지 않음.
+            # =====================================================
+
+            result["baseline_ready"] = False
+
+            result["baseline_progress"] = 1.0
+
+            result["is_baseline"] = True
+
+            result["pred_status"] = (
+                "baseline_failed"
+            )
+
+            result["phase"] = "baseline"
+
+            logger.error(
+                "[baseline] FINALIZE FAILED: "
+                "device=%s "
+                "active=%s",
+                device_id,
+                baseline_active_after,
+            )
+
             return result
 
-        detector = self._detectors.get(device_id)
+        # =========================================================
+        # 20. 여기부터는 BASELINE 측정 중이 아님
+        # =========================================================
 
-        if extractor is None or detector is None or not self._model_ready:
+        # 최신 상태 다시 확인
+        baseline_done = self._baseline_done.get(
+            device_id,
+            False,
+        )
+
+        # =========================================================
+        # 21. 사용할 baseline이 없는 상태
+        #
+        # baseline 실패 후에도 여기로 들어온다.
+        #
+        # 중요:
+        # 이 packet은 baseline이 아니다.
+        # =========================================================
+
+        if not baseline_done:
+
+            result["is_baseline"] = False
+
+            result["baseline_ready"] = False
+
+            result["baseline_progress"] = 0.0
+
+            result["pred_status"] = (
+                "waiting_for_session"
+            )
+
+            result["phase"] = "waiting"
+
+            # baseline은 아니지만 extractor 시간축은 유지
+            extractor = self._extractors.get(
+                device_id
+            )
+
+            if extractor is not None:
+
+                extractor.feed_packet(arr)
+
+            return result
+
+        # =========================================================
+        # 22. BASELINE 완료 후 inference
+        # =========================================================
+
+        detector = self._detectors.get(
+            device_id
+        )
+
+        extractor = self._extractors.get(
+            device_id
+        )
+
+        # =========================================================
+        # 23. inference 준비 여부 확인
+        # =========================================================
+
+        if (
+            extractor is None
+            or detector is None
+            or not self._model_ready
+        ):
+
+            result["is_baseline"] = False
+
+            result["baseline_ready"] = True
+
             result["phase"] = "error"
-            result["pred_status"] = "not_ready"
+
+            result["pred_status"] = (
+                "not_ready"
+            )
+
             return result
 
-        new_beats = extractor.feed_packet(arr)
+        # =========================================================
+        # 24. realtime beat 추출
+        # =========================================================
+
+        new_beats = extractor.feed_packet(
+            arr
+        )
+
         beat_results = []
+
         last = None
 
+        # =========================================================
+        # 25. beat별 apnea inference
+        # =========================================================
+
         for beat_feat in new_beats:
-            r = detector.update_with_beat(beat_feat)
+
+            r = detector.update_with_beat(
+                beat_feat
+            )
 
             if r is None:
                 continue
 
             beat_results.append({
-                "time_sec": r.get("time_sec"),
-                "p_apnea": r.get("p_apnea"),
-                "p_apnea_smooth": r.get("p_apnea_smooth"),
-                "pred_label": r.get("pred_label"),
-                "status": r.get("status", "ok"),
+                "time_sec": (
+                    r.get("time_sec")
+                ),
+
+                "p_apnea": (
+                    r.get("p_apnea")
+                ),
+
+                "p_apnea_smooth": (
+                    r.get(
+                        "p_apnea_smooth"
+                    )
+                ),
+
+                "pred_label": (
+                    r.get("pred_label")
+                ),
+
+                "status": (
+                    r.get(
+                        "status",
+                        "ok",
+                    )
+                ),
             })
 
             last = r
 
+        # =========================================================
+        # 26. inference 결과
+        # =========================================================
+
+        result["is_baseline"] = False
+
         result["phase"] = "inference"
+
+        result["baseline_ready"] = True
+
+        result["baseline_progress"] = 1.0
+
         result["beat_results"] = beat_results
 
+        # =========================================================
+        # 27. 마지막 beat 결과
+        # =========================================================
+
         if last is not None:
-            result["p_apnea"] = last.get("p_apnea")
-            result["p_apnea_smooth"] = last.get("p_apnea_smooth")
-            result["pred_label"] = last.get("pred_label")
-            result["pred_status"] = last.get("status", "ok")
+
+            result["p_apnea"] = (
+                last.get(
+                    "p_apnea"
+                )
+            )
+
+            result["p_apnea_smooth"] = (
+                last.get(
+                    "p_apnea_smooth"
+                )
+            )
+
+            result["pred_label"] = (
+                last.get(
+                    "pred_label"
+                )
+            )
+
+            result["pred_status"] = (
+                last.get(
+                    "status",
+                    "ok",
+                )
+            )
+
         else:
-            result["pred_status"] = "no_beats_detected"
+
+            result["pred_status"] = (
+                "no_beats_detected"
+            )
+
+        # =========================================================
+        # 28. 완료
+        # =========================================================
 
         return result
